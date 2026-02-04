@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strconv"
 	"time"
 )
 
@@ -19,20 +20,43 @@ const (
 type BallDontLieClient struct {
 	apiKey string
 	client *RateLimitedClient
+
+	// Cache for game info (refreshed every 5 minutes)
+	gamesCache     map[int]GameInfo
+	gamesCacheDate string
+	gamesCacheTime time.Time
 }
 
 // NewBallDontLieClient creates a new API client
 func NewBallDontLieClient(apiKey string) *BallDontLieClient {
 	return &BallDontLieClient{
-		apiKey: apiKey,
-		client: NewRateLimitedClient(requestsPerMinute, requestTimeout, maxRetries),
+		apiKey:     apiKey,
+		client:     NewRateLimitedClient(requestsPerMinute, requestTimeout, maxRetries),
+		gamesCache: make(map[int]GameInfo),
 	}
 }
 
-// OddsResponse represents the API response for odds
-type OddsResponse struct {
-	Data []GameOdds `json:"data"`
-	Meta Meta       `json:"meta"`
+// OddsResponseV2 represents the v2 API response (flat format, one record per vendor)
+type OddsResponseV2 struct {
+	Data []OddsRecordV2 `json:"data"`
+	Meta Meta           `json:"meta"`
+}
+
+// OddsRecordV2 represents a single odds record from v2 API (flat format)
+type OddsRecordV2 struct {
+	ID               int     `json:"id"`
+	GameID           int     `json:"game_id"`
+	Vendor           string  `json:"vendor"`
+	SpreadHomeValue  string  `json:"spread_home_value"`
+	SpreadHomeOdds   int     `json:"spread_home_odds"`
+	SpreadAwayValue  string  `json:"spread_away_value"`
+	SpreadAwayOdds   int     `json:"spread_away_odds"`
+	MoneylineHomeOdds *int   `json:"moneyline_home_odds"`
+	MoneylineAwayOdds *int   `json:"moneyline_away_odds"`
+	TotalValue       string  `json:"total_value"`
+	TotalOverOdds    *int    `json:"total_over_odds"`
+	TotalUnderOdds   *int    `json:"total_under_odds"`
+	UpdatedAt        string  `json:"updated_at"`
 }
 
 // Meta contains pagination info
@@ -42,7 +66,7 @@ type Meta struct {
 	TotalCount  int `json:"total_count"`
 }
 
-// GameOdds contains odds for a single game
+// GameOdds contains odds for a single game (grouped format for internal use)
 type GameOdds struct {
 	ID        int       `json:"id"`
 	GameID    int       `json:"game_id"`
@@ -121,18 +145,83 @@ type Total struct {
 	UnderOdds int    `json:"under_odds"`
 }
 
+// GamesResponse represents the API response for games
+type GamesResponse struct {
+	Data []GameInfo `json:"data"`
+	Meta Meta       `json:"meta"`
+}
+
+// GameInfo represents game details from the games endpoint
+type GameInfo struct {
+	ID              int    `json:"id"`
+	Date            string `json:"date"`
+	DateTime        string `json:"datetime"`
+	Status          string `json:"status"`
+	HomeTeam        Team   `json:"home_team"`
+	VisitorTeam     Team   `json:"visitor_team"`
+	HomeTeamScore   int    `json:"home_team_score"`
+	VisitorTeamScore int   `json:"visitor_team_score"`
+}
+
+// GetGames fetches NBA games for a specific date
+func (c *BallDontLieClient) GetGames(date time.Time) (map[int]GameInfo, error) {
+	dateStr := date.Format("2006-01-02")
+	headers := map[string]string{
+		"Authorization": c.apiKey,
+	}
+
+	url := fmt.Sprintf("%s/games?dates[]=%s", baseURL, dateStr)
+	body, err := c.client.Get(url, headers)
+	if err != nil {
+		return nil, fmt.Errorf("fetching games: %w", err)
+	}
+
+	var resp GamesResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("parsing games response: %w", err)
+	}
+
+	// Build map by game ID for quick lookup
+	gameMap := make(map[int]GameInfo)
+	for _, g := range resp.Data {
+		gameMap[g.ID] = g
+	}
+
+	return gameMap, nil
+}
+
 // GetOdds fetches NBA odds for a specific date, handling pagination
+// Converts v2 flat format (one record per vendor) to grouped format (one record per game)
 func (c *BallDontLieClient) GetOdds(date time.Time) ([]GameOdds, error) {
 	dateStr := date.Format("2006-01-02")
 	headers := map[string]string{
 		"Authorization": c.apiKey,
 	}
 
-	var allGames []GameOdds
+	// Use cached game info if available and fresh (within 5 minutes for same date)
+	games := c.gamesCache
+	cacheExpired := time.Since(c.gamesCacheTime) > 5*time.Minute
+	dateChanged := c.gamesCacheDate != dateStr
+
+	if cacheExpired || dateChanged || len(games) == 0 {
+		var err error
+		games, err = c.GetGames(date)
+		if err != nil {
+			log.Printf("Warning: could not fetch game details: %v", err)
+			games = make(map[int]GameInfo)
+		} else {
+			// Update cache
+			c.gamesCache = games
+			c.gamesCacheDate = dateStr
+			c.gamesCacheTime = time.Now()
+		}
+	}
+
+	var allRecords []OddsRecordV2
 	cursor := 0
 
 	for {
-		url := fmt.Sprintf("%s/odds?date=%s", baseURLV2, dateStr)
+		url := fmt.Sprintf("%s/odds?dates[]=%s&per_page=100", baseURLV2, dateStr)
 		if cursor > 0 {
 			url = fmt.Sprintf("%s&cursor=%d", url, cursor)
 		}
@@ -142,12 +231,12 @@ func (c *BallDontLieClient) GetOdds(date time.Time) ([]GameOdds, error) {
 			return nil, fmt.Errorf("fetching odds: %w", err)
 		}
 
-		var resp OddsResponse
+		var resp OddsResponseV2
 		if err := json.Unmarshal(body, &resp); err != nil {
 			return nil, fmt.Errorf("parsing odds response: %w", err)
 		}
 
-		allGames = append(allGames, resp.Data...)
+		allRecords = append(allRecords, resp.Data...)
 
 		// Check if there are more pages
 		if resp.Meta.NextCursor == 0 {
@@ -156,7 +245,89 @@ func (c *BallDontLieClient) GetOdds(date time.Time) ([]GameOdds, error) {
 		cursor = resp.Meta.NextCursor
 	}
 
-	return allGames, nil
+	// Group records by game_id and convert to GameOdds format
+	return groupOddsByGame(allRecords, games), nil
+}
+
+// groupOddsByGame converts flat v2 records to grouped GameOdds format
+func groupOddsByGame(records []OddsRecordV2, games map[int]GameInfo) []GameOdds {
+	gameMap := make(map[int]*GameOdds)
+
+	for _, rec := range records {
+		game, exists := gameMap[rec.GameID]
+		if !exists {
+			game = &GameOdds{
+				ID:        rec.ID,
+				GameID:    rec.GameID,
+				UpdatedAt: rec.UpdatedAt,
+				Vendors:   []Vendor{},
+			}
+			// Populate game details if available
+			if gameInfo, ok := games[rec.GameID]; ok {
+				game.Game = Game{
+					ID:          gameInfo.ID,
+					Date:        gameInfo.Date,
+					DateTime:    gameInfo.DateTime,
+					Status:      gameInfo.Status,
+					HomeTeam:    gameInfo.HomeTeam,
+					VisitorTeam: gameInfo.VisitorTeam,
+					HomeTeamScore: gameInfo.HomeTeamScore,
+					VisitorScore:  gameInfo.VisitorTeamScore,
+				}
+			}
+			gameMap[rec.GameID] = game
+		}
+
+		// Convert flat record to Vendor struct
+		vendor := Vendor{
+			Name: rec.Vendor,
+		}
+
+		// Parse moneyline (if available)
+		if rec.MoneylineHomeOdds != nil && rec.MoneylineAwayOdds != nil {
+			vendor.Moneyline = &Moneyline{
+				Home: *rec.MoneylineHomeOdds,
+				Away: *rec.MoneylineAwayOdds,
+			}
+		}
+
+		// Parse spread (if available)
+		if rec.SpreadHomeValue != "" && rec.SpreadHomeOdds != 0 {
+			homeSpread, _ := strconv.ParseFloat(rec.SpreadHomeValue, 64)
+			awaySpread, _ := strconv.ParseFloat(rec.SpreadAwayValue, 64)
+			vendor.Spread = &Spread{
+				HomeSpread: homeSpread,
+				HomeOdds:   rec.SpreadHomeOdds,
+				AwaySpread: awaySpread,
+				AwayOdds:   rec.SpreadAwayOdds,
+			}
+		}
+
+		// Parse total (if available)
+		if rec.TotalValue != "" && rec.TotalOverOdds != nil && rec.TotalUnderOdds != nil {
+			line, _ := strconv.ParseFloat(rec.TotalValue, 64)
+			vendor.Total = &Total{
+				Line:      line,
+				OverOdds:  *rec.TotalOverOdds,
+				UnderOdds: *rec.TotalUnderOdds,
+			}
+		}
+
+		game.Vendors = append(game.Vendors, vendor)
+
+		// Update timestamp if newer
+		if rec.UpdatedAt > game.UpdatedAt {
+			game.UpdatedAt = rec.UpdatedAt
+		}
+	}
+
+	// Convert map to slice
+	result := make([]GameOdds, 0, len(gameMap))
+	for _, game := range gameMap {
+		result = append(result, *game)
+	}
+
+	return result
 }
 
 // GetTodaysOdds fetches odds for today's NBA games

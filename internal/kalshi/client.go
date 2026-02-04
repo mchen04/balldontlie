@@ -52,18 +52,27 @@ type KalshiClient struct {
 // privateKeyPath: Path to the RSA private key PEM file
 // demo: If true, use the demo API endpoint
 func NewKalshiClient(keyID, privateKeyPath string, demo bool) (*KalshiClient, error) {
-	base := baseURL
-	if demo {
-		base = demoURL
-	}
-
-	// Load private key
+	// Load private key from file
 	keyData, err := os.ReadFile(privateKeyPath)
 	if err != nil {
 		return nil, fmt.Errorf("reading private key: %w", err)
 	}
 
-	block, _ := pem.Decode(keyData)
+	return NewKalshiClientFromKey(keyID, string(keyData), demo)
+}
+
+// NewKalshiClientFromKey creates a client using API key authentication with key content directly
+// keyID: The API key ID from Kalshi
+// privateKeyPEM: The RSA private key content (PEM format)
+// demo: If true, use the demo API endpoint
+// This is the preferred method for cloud deployments where secrets are passed as env vars
+func NewKalshiClientFromKey(keyID, privateKeyPEM string, demo bool) (*KalshiClient, error) {
+	base := baseURL
+	if demo {
+		base = demoURL
+	}
+
+	block, _ := pem.Decode([]byte(privateKeyPEM))
 	if block == nil {
 		return nil, fmt.Errorf("failed to decode PEM block")
 	}

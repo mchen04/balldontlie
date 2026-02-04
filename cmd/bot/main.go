@@ -32,7 +32,8 @@ type Config struct {
 
 	// Kalshi API settings (API key auth only - email/password deprecated)
 	KalshiAPIKeyID   string
-	KalshiAPIKeyPath string
+	KalshiAPIKeyPath string // For local dev (file path)
+	KalshiPrivateKey string // For cloud deployment (key content directly)
 	KalshiDemo       bool
 
 	// Execution settings
@@ -50,13 +51,14 @@ func loadConfig() Config {
 		EVThreshold:   0.03,
 		KalshiFee:     0.012,
 		KellyFraction: 0.25,
-		PollInterval:  100 * time.Millisecond,
+		PollInterval:  2 * time.Second, // 2 API calls per poll, so 1 req/sec = 60 req/min (well under 600 limit)
 		DBPath:        "/data/positions.db",
 		Port:          "8080",
 
 		// Kalshi API key auth (email/password deprecated by Kalshi)
 		KalshiAPIKeyID:   os.Getenv("KALSHI_API_KEY_ID"),
-		KalshiAPIKeyPath: os.Getenv("KALSHI_API_KEY_PATH"),
+		KalshiAPIKeyPath: os.Getenv("KALSHI_API_KEY_PATH"), // Local dev: file path
+		KalshiPrivateKey: os.Getenv("KALSHI_PRIVATE_KEY"),  // Cloud: key content directly
 		KalshiDemo:       os.Getenv("KALSHI_DEMO") == "true",
 
 		// Execution defaults
@@ -173,10 +175,19 @@ func main() {
 
 	// Initialize Kalshi client if API key credentials provided
 	// Note: Kalshi requires API key auth (email/password deprecated)
+	// Supports two modes:
+	//   1. Cloud: KALSHI_PRIVATE_KEY env var with key content (preferred for Fly.io)
+	//   2. Local: KALSHI_API_KEY_PATH env var with file path
 	var kalshiClient *kalshi.KalshiClient
-	if cfg.KalshiAPIKeyID != "" && cfg.KalshiAPIKeyPath != "" {
+	if cfg.KalshiAPIKeyID != "" && (cfg.KalshiPrivateKey != "" || cfg.KalshiAPIKeyPath != "") {
 		var err error
-		kalshiClient, err = kalshi.NewKalshiClient(cfg.KalshiAPIKeyID, cfg.KalshiAPIKeyPath, cfg.KalshiDemo)
+		if cfg.KalshiPrivateKey != "" {
+			// Cloud mode: key content passed directly via env var
+			kalshiClient, err = kalshi.NewKalshiClientFromKey(cfg.KalshiAPIKeyID, cfg.KalshiPrivateKey, cfg.KalshiDemo)
+		} else {
+			// Local mode: key loaded from file
+			kalshiClient, err = kalshi.NewKalshiClient(cfg.KalshiAPIKeyID, cfg.KalshiAPIKeyPath, cfg.KalshiDemo)
+		}
 		if err != nil {
 			log.Printf("Warning: Could not initialize Kalshi client: %v", err)
 			log.Println("Kalshi integration will be disabled")
@@ -334,8 +345,9 @@ func scanForOpportunities(
 	propOpps := 0
 
 	for _, game := range gameOdds {
-		// Skip games that have started
-		if game.Game.Status != "scheduled" && game.Game.Status != "" {
+		// Skip games that have started (status will be "Final" or similar for completed games)
+		// For scheduled games, status is typically a datetime or empty
+		if game.Game.Status == "Final" || game.Game.Status == "In Progress" {
 			continue
 		}
 
