@@ -368,12 +368,17 @@ type PlayerProp struct {
 	ID        int              `json:"id"`
 	GameID    int              `json:"game_id"`
 	PlayerID  int              `json:"player_id"`
-	Player    Player           `json:"player"`
 	Vendor    string           `json:"vendor"`
 	PropType  string           `json:"prop_type"` // points, rebounds, assists, threes, etc.
-	Line      float64          `json:"line_value"`
+	LineStr   string           `json:"line_value"` // API returns string
 	Market    PlayerPropMarket `json:"market"`
 	UpdatedAt string           `json:"updated_at"`
+}
+
+// Line returns the line value as float64
+func (p *PlayerProp) Line() float64 {
+	val, _ := strconv.ParseFloat(p.LineStr, 64)
+	return val
 }
 
 // Player represents a player in the API

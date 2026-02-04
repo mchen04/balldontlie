@@ -344,6 +344,16 @@ func scanForOpportunities(
 	gameOpps := 0
 	propOpps := 0
 
+	// Fetch Kalshi player props once for all games (more efficient)
+	var kalshiPlayerProps map[string][]kalshi.PlayerPropMarket
+	if kalshiClient != nil {
+		var err error
+		kalshiPlayerProps, err = kalshiClient.GetPlayerPropMarkets(time.Now())
+		if err != nil {
+			notifier.LogError("fetching Kalshi player props", err)
+		}
+	}
+
 	for _, game := range gameOdds {
 		// Skip games that have started (status will be "Final" or similar for completed games)
 		// For scheduled games, status is typically a datetime or empty
@@ -374,14 +384,19 @@ func scanForOpportunities(
 		// Fetch and analyze player props for this game
 		playerProps, err := client.GetPlayerProps(game.GameID)
 		if err == nil && len(playerProps) > 0 {
-			propOpportunities := analysis.FindPlayerPropOpportunities(
-				playerProps,
-				game.Game.Date,
-				game.Game.HomeTeam.Abbreviation,
-				game.Game.VisitorTeam.Abbreviation,
-				game.GameID,
-				cfg,
-			)
+			// Use the new function that matches BDL props with Kalshi props
+			var propOpportunities []analysis.PlayerPropOpportunity
+			if len(kalshiPlayerProps) > 0 {
+				propOpportunities = analysis.FindPlayerPropOpportunitiesWithKalshi(
+					playerProps,
+					kalshiPlayerProps,
+					game.Game.Date,
+					game.Game.HomeTeam.Abbreviation,
+					game.Game.VisitorTeam.Abbreviation,
+					game.GameID,
+					cfg,
+				)
+			}
 			for _, propOpp := range propOpportunities {
 				notifier.AlertPlayerProp(propOpp)
 				propOpps++

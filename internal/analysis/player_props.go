@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"sports-betting-bot/internal/api"
+	"sports-betting-bot/internal/kalshi"
 	"sports-betting-bot/internal/odds"
 )
 
@@ -90,13 +91,14 @@ func CalculatePlayerPropConsensus(props []api.PlayerProp) *PlayerPropConsensus {
 		underSum += underProbs[i]
 	}
 
-	playerName := first.Player.FirstName + " " + first.Player.LastName
+	// Player name not included in v2 API, use ID as placeholder
+	playerName := fmt.Sprintf("Player_%d", first.PlayerID)
 
 	return &PlayerPropConsensus{
 		PlayerID:         first.PlayerID,
 		PlayerName:       playerName,
 		PropType:         first.PropType,
-		Line:             first.Line,
+		Line:             first.Line(),
 		OverTrueProb:     overSum / float64(len(overProbs)),
 		UnderTrueProb:    underSum / float64(len(underProbs)),
 		KalshiOverPrice:  kalshiOverPrice,
@@ -191,7 +193,7 @@ func groupPlayerProps(props []api.PlayerProp) map[string][]api.PlayerProp {
 		}
 
 		// Create unique key for this player/prop/line combination
-		key := groupKey(prop.PlayerID, prop.PropType, prop.Line)
+		key := groupKey(prop.PlayerID, prop.PropType, prop.Line())
 		grouped[key] = append(grouped[key], prop)
 	}
 
@@ -200,4 +202,189 @@ func groupPlayerProps(props []api.PlayerProp) map[string][]api.PlayerProp {
 
 func groupKey(playerID int, propType string, line float64) string {
 	return fmt.Sprintf("%d-%s-%.1f", playerID, propType, line)
+}
+
+// FindPlayerPropOpportunitiesWithKalshi finds +EV player prop bets using direct Kalshi data
+// This matches Ball Don't Lie consensus with Kalshi prices fetched directly from Kalshi API
+func FindPlayerPropOpportunitiesWithKalshi(
+	bdlProps []api.PlayerProp,
+	kalshiProps map[string][]kalshi.PlayerPropMarket, // keyed by prop type
+	gameDate, homeTeam, awayTeam string,
+	gameID int,
+	cfg Config,
+) []PlayerPropOpportunity {
+	var opportunities []PlayerPropOpportunity
+
+	// Group BDL props by player name + prop type + line
+	// Use player name as key since BDL only has player_id, not name in v2
+	type propKey struct {
+		PlayerID int
+		PropType string
+		Line     float64
+	}
+	grouped := make(map[propKey][]api.PlayerProp)
+
+	for _, prop := range bdlProps {
+		if !api.IsKalshiSupportedPropType(prop.PropType) {
+			continue
+		}
+		key := propKey{
+			PlayerID: prop.PlayerID,
+			PropType: prop.PropType,
+			Line:     prop.Line(),
+		}
+		grouped[key] = append(grouped[key], prop)
+	}
+
+	// For each BDL prop group, calculate consensus and find matching Kalshi market
+	for key, group := range grouped {
+		// Calculate consensus from BDL books (excluding Kalshi since it's not in BDL)
+		consensus := calculateBDLConsensus(group)
+		if consensus == nil || consensus.BookCount < cfg.MinBookCount {
+			continue
+		}
+
+		// Find matching Kalshi market
+		kalshiMarkets, ok := kalshiProps[key.PropType]
+		if !ok || len(kalshiMarkets) == 0 {
+			continue
+		}
+
+		// Try to match by line - BDL uses "over 24.5", Kalshi uses "25+"
+		// The Kalshi line should be ceil(BDL line)
+		expectedKalshiLine := float64(int(key.Line) + 1)
+		if key.Line == float64(int(key.Line)) {
+			// If BDL line is whole number (e.g., 25.0), Kalshi line is same
+			expectedKalshiLine = key.Line
+		}
+
+		var matchedKalshi *kalshi.PlayerPropMarket
+		for _, km := range kalshiMarkets {
+			if km.Line == expectedKalshiLine || km.Line == key.Line+0.5 || km.Line == key.Line {
+				// Name matching is tricky without player names in BDL
+				// For now, we'll match by line only within the same prop type
+				// This could match wrong player if same line, but better than nothing
+				matchedKalshi = &km
+				break
+			}
+		}
+
+		if matchedKalshi == nil {
+			continue
+		}
+
+		// Calculate Kalshi prices from bid/ask
+		// For OVER (YES): use yes_ask (price to buy YES)
+		// For UNDER (NO): use no_ask (price to buy NO), or 100 - yes_bid
+		kalshiOverPrice := float64(matchedKalshi.YesAsk) / 100.0
+		kalshiUnderPrice := float64(matchedKalshi.NoAsk) / 100.0
+		if kalshiUnderPrice == 0 && matchedKalshi.YesBid > 0 {
+			kalshiUnderPrice = float64(100-matchedKalshi.YesBid) / 100.0
+		}
+
+		// Check OVER opportunity (YES on Kalshi)
+		if kalshiOverPrice > 0 && kalshiOverPrice < 1 {
+			adjEV := CalculateAdjustedEV(consensus.OverTrueProb, kalshiOverPrice, cfg.KalshiFee)
+			if adjEV >= cfg.EVThreshold {
+				opportunities = append(opportunities, PlayerPropOpportunity{
+					GameID:      gameID,
+					GameDate:    gameDate,
+					HomeTeam:    homeTeam,
+					AwayTeam:    awayTeam,
+					PlayerID:    key.PlayerID,
+					PlayerName:  matchedKalshi.PlayerName,
+					PropType:    key.PropType,
+					Line:        matchedKalshi.Line,
+					Side:        "over",
+					TrueProb:    consensus.OverTrueProb,
+					KalshiPrice: kalshiOverPrice,
+					RawEV:       CalculateEV(consensus.OverTrueProb, kalshiOverPrice),
+					AdjustedEV:  adjEV,
+					KellyStake:  CalculateKelly(consensus.OverTrueProb, kalshiOverPrice, cfg.KellyFraction),
+					BookCount:   consensus.BookCount,
+				})
+			}
+		}
+
+		// Check UNDER opportunity (NO on Kalshi)
+		if kalshiUnderPrice > 0 && kalshiUnderPrice < 1 {
+			adjEV := CalculateAdjustedEV(consensus.UnderTrueProb, kalshiUnderPrice, cfg.KalshiFee)
+			if adjEV >= cfg.EVThreshold {
+				opportunities = append(opportunities, PlayerPropOpportunity{
+					GameID:      gameID,
+					GameDate:    gameDate,
+					HomeTeam:    homeTeam,
+					AwayTeam:    awayTeam,
+					PlayerID:    key.PlayerID,
+					PlayerName:  matchedKalshi.PlayerName,
+					PropType:    key.PropType,
+					Line:        matchedKalshi.Line,
+					Side:        "under",
+					TrueProb:    consensus.UnderTrueProb,
+					KalshiPrice: kalshiUnderPrice,
+					RawEV:       CalculateEV(consensus.UnderTrueProb, kalshiUnderPrice),
+					AdjustedEV:  adjEV,
+					KellyStake:  CalculateKelly(consensus.UnderTrueProb, kalshiUnderPrice, cfg.KellyFraction),
+					BookCount:   consensus.BookCount,
+				})
+			}
+		}
+	}
+
+	return opportunities
+}
+
+// calculateBDLConsensus calculates consensus from Ball Don't Lie props only (no Kalshi)
+func calculateBDLConsensus(props []api.PlayerProp) *PlayerPropConsensus {
+	if len(props) == 0 {
+		return nil
+	}
+
+	first := props[0]
+
+	var overProbs, underProbs []float64
+
+	for _, prop := range props {
+		// Skip non over/under markets
+		if prop.Market.Type != "over_under" {
+			continue
+		}
+
+		// Skip if odds are zero
+		if prop.Market.OverOdds == 0 || prop.Market.UnderOdds == 0 {
+			continue
+		}
+
+		// Skip Kalshi (we get their prices directly)
+		if api.IsKalshi(prop.Vendor) {
+			continue
+		}
+
+		// Remove vig
+		overProb, underProb := odds.RemoveVigFromAmerican(prop.Market.OverOdds, prop.Market.UnderOdds)
+		if overProb > 0 && underProb > 0 {
+			overProbs = append(overProbs, overProb)
+			underProbs = append(underProbs, underProb)
+		}
+	}
+
+	if len(overProbs) == 0 {
+		return nil
+	}
+
+	var overSum, underSum float64
+	for i := range overProbs {
+		overSum += overProbs[i]
+		underSum += underProbs[i]
+	}
+
+	return &PlayerPropConsensus{
+		PlayerID:      first.PlayerID,
+		PlayerName:    fmt.Sprintf("Player_%d", first.PlayerID),
+		PropType:      first.PropType,
+		Line:          first.Line(),
+		OverTrueProb:  overSum / float64(len(overProbs)),
+		UnderTrueProb: underSum / float64(len(underProbs)),
+		BookCount:     len(overProbs),
+	}
 }

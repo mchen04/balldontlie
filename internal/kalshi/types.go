@@ -233,6 +233,20 @@ type APIError struct {
 	Message string `json:"message"`
 }
 
+// PlayerPropMarket represents a parsed Kalshi player prop market
+type PlayerPropMarket struct {
+	Ticker     string  // Full ticker
+	PlayerName string  // Extracted player name
+	PropType   string  // "points", "rebounds", "assists", "threes"
+	Line       float64 // e.g., 25 for "25+ points"
+	YesBid     int     // Best bid for YES (player hits line)
+	YesAsk     int     // Best ask for YES
+	NoBid      int     // Best bid for NO
+	NoAsk      int     // Best ask for NO
+	GameDate   string  // e.g., "26FEB04"
+	Teams      string  // e.g., "BOSHOU"
+}
+
 // Execution Results (internal types for order execution flow)
 
 // LiquidityCheck result from CheckLiquidity
