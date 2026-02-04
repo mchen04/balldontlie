@@ -1,0 +1,48 @@
+# fly.toml - Fly.io configuration for sports-betting-bot
+# Deploy with: fly launch (first time) or fly deploy (updates)
+
+app = "sports-betting-bot"
+primary_region = "ord"  # Chicago - close to most NBA action
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  EV_THRESHOLD = "0.03"
+  POLL_INTERVAL_MS = "100"
+  KELLY_FRACTION = "0.25"
+  KALSHI_FEE_PCT = "0.012"
+  DB_PATH = "/data/positions.db"
+  PORT = "8080"
+
+# Persistent storage for SQLite database
+[mounts]
+  source = "bot_data"
+  destination = "/data"
+
+[[services]]
+  internal_port = 8080
+  protocol = "tcp"
+  auto_stop_machines = false  # Keep running 24/7
+  auto_start_machines = true
+
+  [[services.ports]]
+    handlers = ["http"]
+    port = 80
+    force_https = true
+
+  [[services.ports]]
+    handlers = ["tls", "http"]
+    port = 443
+
+  [[services.http_checks]]
+    path = "/health"
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "10s"
+
+# Use smallest machine for cost efficiency
+# This bot is CPU-light, just HTTP polling
+[vm]
+  size = "shared-cpu-1x"
+  memory = "256mb"
