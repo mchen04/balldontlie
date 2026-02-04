@@ -132,7 +132,7 @@ func (c *BallDontLieClient) GetOdds(date time.Time) ([]GameOdds, error) {
 	cursor := 0
 
 	for {
-		url := fmt.Sprintf("%s/odds?date=%s", baseURL, dateStr)
+		url := fmt.Sprintf("%s/odds?date=%s", baseURLV2, dateStr)
 		if cursor > 0 {
 			url = fmt.Sprintf("%s&cursor=%d", url, cursor)
 		}
