@@ -113,7 +113,7 @@ func CalculateConsensus(gameOdds api.GameOdds) ConsensusOdds {
 
 		// Moneyline (no normalization needed)
 		if vendor.Moneyline != nil && vendor.Moneyline.Home != 0 && vendor.Moneyline.Away != 0 {
-			homeProb, awayProb := RemoveVigFromAmerican(vendor.Moneyline.Home, vendor.Moneyline.Away)
+			homeProb, awayProb := RemoveVigPowerFromAmerican(vendor.Moneyline.Home, vendor.Moneyline.Away)
 			if homeProb > 0 && awayProb > 0 {
 				mlProbs = append(mlProbs, struct{ home, away float64 }{homeProb, awayProb})
 			}
@@ -121,7 +121,7 @@ func CalculateConsensus(gameOdds api.GameOdds) ConsensusOdds {
 
 		// Spread (normalize to Kalshi line)
 		if vendor.Spread != nil && vendor.Spread.HomeOdds != 0 && vendor.Spread.AwayOdds != 0 {
-			homeCover, awayCover := RemoveVigFromAmerican(vendor.Spread.HomeOdds, vendor.Spread.AwayOdds)
+			homeCover, awayCover := RemoveVigPowerFromAmerican(vendor.Spread.HomeOdds, vendor.Spread.AwayOdds)
 			if homeCover > 0 && awayCover > 0 {
 				// Normalize to Kalshi line if available
 				if kalshiSpreadLine != 0 {
@@ -136,7 +136,7 @@ func CalculateConsensus(gameOdds api.GameOdds) ConsensusOdds {
 
 		// Total (normalize to Kalshi line)
 		if vendor.Total != nil && vendor.Total.OverOdds != 0 && vendor.Total.UnderOdds != 0 {
-			overProb, underProb := RemoveVigFromAmerican(vendor.Total.OverOdds, vendor.Total.UnderOdds)
+			overProb, underProb := RemoveVigPowerFromAmerican(vendor.Total.OverOdds, vendor.Total.UnderOdds)
 			if overProb > 0 && underProb > 0 {
 				// Normalize to Kalshi line if available
 				if kalshiTotalLine != 0 {

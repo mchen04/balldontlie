@@ -72,8 +72,8 @@ func CalculatePlayerPropConsensus(props []api.PlayerProp) *PlayerPropConsensus {
 			continue
 		}
 
-		// Remove vig for other books
-		overProb, underProb := odds.RemoveVigFromAmerican(prop.Market.OverOdds, prop.Market.UnderOdds)
+		// Remove vig for other books using Power method (accounts for FLB bias)
+		overProb, underProb := odds.RemoveVigPowerFromAmerican(prop.Market.OverOdds, prop.Market.UnderOdds)
 		if overProb > 0 && underProb > 0 {
 			overProbs = append(overProbs, overProb)
 			underProbs = append(underProbs, underProb)
@@ -525,8 +525,8 @@ func calculateBDLConsensus(props []api.PlayerProp) *PlayerPropConsensus {
 			continue
 		}
 
-		// Remove vig
-		overProb, underProb := odds.RemoveVigFromAmerican(prop.Market.OverOdds, prop.Market.UnderOdds)
+		// Remove vig using Power method (accounts for FLB bias)
+		overProb, underProb := odds.RemoveVigPowerFromAmerican(prop.Market.OverOdds, prop.Market.UnderOdds)
 		if overProb > 0 && underProb > 0 {
 			overProbs = append(overProbs, overProb)
 			underProbs = append(underProbs, underProb)
