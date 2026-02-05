@@ -9,7 +9,7 @@ primary_region = "ord"  # Chicago - close to most NBA action
 
 [env]
   EV_THRESHOLD = "0.03"
-  POLL_INTERVAL_MS = "100"
+  POLL_INTERVAL_MS = "2000"
   KELLY_FRACTION = "0.25"
   KALSHI_FEE_PCT = "0.012"
   DB_PATH = "/data/positions.db"
