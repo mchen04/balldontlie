@@ -51,6 +51,12 @@ go run ./cmd/bot
 
 See [docs/architecture.md](docs/architecture.md) for full configuration options.
 
+## Documentation
+
+- **[Architecture](docs/architecture.md)** - System design and configuration
+- **[Math](docs/math.md)** - EV calculation, Kelly criterion, vig removal
+- **[Player Props](docs/player-props.md)** - Props analysis and line interpolation
+
 ## Project Structure
 
 ```

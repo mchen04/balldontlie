@@ -214,9 +214,16 @@ f  = f* × 0.25           [quarter-Kelly]
 4. **Model assumptions** - Normal distribution is approximation
 5. **Sharp book availability** - Consensus quality depends on data
 
+## Further Documentation
+
+- **[math.md](math.md)** - Core mathematical foundations (EV, Kelly, vig removal)
+- **[player-props.md](player-props.md)** - Player props analysis and line interpolation
+
 ## References
 
 - [Boyd's Bets - NBA Key Numbers](https://www.boydsbets.com/nba-key-numbers/)
 - [Boyd's Bets - Standard Deviations](https://www.boydsbets.com/ats-margin-standard-deviations-by-point-spread/)
 - [Kalshi Fees](https://help.kalshi.com/trading/fees)
 - [Kalshi API Docs](https://trading-api.readme.io/reference/getting-started)
+- [Kelly Criterion (Wikipedia)](https://en.wikipedia.org/wiki/Kelly_criterion)
+- [Negative Binomial Distribution](https://en.wikipedia.org/wiki/Negative_binomial_distribution)
