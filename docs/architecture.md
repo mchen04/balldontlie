@@ -76,6 +76,18 @@ sports-betting-bot/
 - Monitors for arbitrage opportunities on held positions
 - Alerts when hedging can lock in guaranteed profit
 
+### 6. Duplicate Prevention
+- Positions stored in SQLite **before** order placement
+- Each position tracked by full Kalshi ticker + bet side (yes/no)
+- Prevents duplicate bets across scans and across restarts
+- Ticker includes date, so next day's bets are not blocked
+
+### 7. Player Props Analysis
+- Matches BallDontLie player props with Kalshi markets
+- Uses interpolation to compare different lines (e.g., BDL 22.5 pts vs Kalshi 20 pts)
+- Supports points, rebounds, assists, threes, blocks, steals
+- Negative binomial distribution for counting stats modeling
+
 ## Architecture Diagram
 
 ```
@@ -168,10 +180,11 @@ f  = f* × 0.25           [quarter-Kelly]
 | `EV_THRESHOLD` | 3% | Minimum adjusted EV to alert |
 | `KALSHI_FEE_PCT` | 1.2% | Trading fee deducted from EV |
 | `KELLY_FRACTION` | 25% | Fraction of full Kelly |
-| `POLL_INTERVAL_MS` | 100ms | Time between API polls |
+| `POLL_INTERVAL_MS` | 2000ms | Time between API polls |
 | `AUTO_EXECUTE` | false | Auto-execute trades on Kalshi |
 | `MAX_SLIPPAGE_PCT` | 2% | Max acceptable slippage |
-| `MIN_LIQUIDITY_CONTRACTS` | 10 | Min order book depth |
+| `MIN_LIQUIDITY_CONTRACTS` | 1 | Min order book depth |
+| `MAX_BET_DOLLARS` | 0 | Max bet size per trade (0 = no cap) |
 | `KALSHI_DEMO` | false | Use Kalshi demo API |
 
 ## Deployment

@@ -41,10 +41,12 @@ go run ./cmd/bot
 |----------|---------|-------------|
 | `BALLDONTLIE_API_KEY` | required | Ball Don't Lie API key |
 | `KALSHI_API_KEY_ID` | optional | Kalshi API key ID |
-| `KALSHI_API_KEY_PATH` | optional | Path to RSA private key |
+| `KALSHI_API_KEY_PATH` | optional | Path to RSA private key (local dev) |
+| `KALSHI_PRIVATE_KEY` | optional | RSA private key content (cloud deployment) |
 | `EV_THRESHOLD` | 0.03 | Min EV to alert (3%) |
 | `KELLY_FRACTION` | 0.25 | Fraction of full Kelly |
 | `AUTO_EXECUTE` | false | Auto-execute trades |
+| `MAX_BET_DOLLARS` | 0 | Max bet size (0 = no cap) |
 | `KALSHI_DEMO` | false | Use demo API |
 
 See [docs/architecture.md](docs/architecture.md) for full configuration options.
