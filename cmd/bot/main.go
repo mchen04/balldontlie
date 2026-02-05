@@ -279,6 +279,9 @@ Max Bet:           %s
 
 	log.Println("Starting polling loop...")
 
+	// Track bets placed this session to prevent duplicates (especially in dry-run mode)
+	sessionBets := make(map[string]bool)
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -289,7 +292,7 @@ Max Bet:           %s
 			notifier.CleanupOldAlerts()
 
 		case <-ticker.C:
-			scanForOpportunities(client, db, notifier, analysisConfig, kalshiClient, execConfig, cfg)
+			scanForOpportunities(client, db, notifier, analysisConfig, kalshiClient, execConfig, cfg, sessionBets)
 		}
 	}
 }
@@ -309,6 +312,7 @@ func scanForOpportunities(
 	kalshiClient *kalshi.KalshiClient,
 	execConfig kalshi.OrderConfig,
 	mainCfg Config,
+	sessionBets map[string]bool, // Track bets placed this session to prevent duplicates
 ) {
 	gameOdds, err := client.GetTodaysOdds()
 	if err != nil {
@@ -432,7 +436,7 @@ func scanForOpportunities(
 	for _, opp := range allGameOpps {
 		notifier.AlertOpportunity(opp)
 		if kalshiAvailable && bankroll > 0 {
-			spent := executeOpportunity(kalshiClient, opp, bankroll, execConfig, mainCfg, notifier, db)
+			spent := executeOpportunity(kalshiClient, opp, bankroll, execConfig, mainCfg, notifier, db, sessionBets)
 			bankroll -= spent // Update bankroll for next bet's Kelly calculation
 		}
 	}
@@ -441,7 +445,7 @@ func scanForOpportunities(
 	for _, propOpp := range allPropOpps {
 		notifier.AlertPlayerProp(propOpp)
 		if kalshiAvailable && bankroll > 0 {
-			spent := executePlayerPropOpportunity(kalshiClient, propOpp, bankroll, execConfig, mainCfg, notifier, db)
+			spent := executePlayerPropOpportunity(kalshiClient, propOpp, bankroll, execConfig, mainCfg, notifier, db, sessionBets)
 			bankroll -= spent // Update bankroll for next bet's Kelly calculation
 		}
 	}
@@ -459,6 +463,7 @@ func executeOpportunity(
 	cfg Config,
 	notifier *alerts.Notifier,
 	db *positions.DB,
+	sessionBets map[string]bool,
 ) float64 {
 	// Convert opportunity to Kalshi market ticker
 	ticker := mapToKalshiTicker(opp)
@@ -471,6 +476,13 @@ func executeOpportunity(
 	side := kalshi.SideYes
 	if opp.Side == "away" || opp.Side == "under" {
 		side = kalshi.SideNo
+	}
+
+	// Check session-level duplicate (prevents re-betting same market this session)
+	betKey := fmt.Sprintf("%s:%s", ticker, side)
+	if sessionBets[betKey] {
+		log.Printf("Skipping %s %s: already bet on this market this session", ticker, side)
+		return 0
 	}
 
 	// Check for existing position - prevent duplicate bets unless arb
@@ -492,13 +504,20 @@ func executeOpportunity(
 	}
 
 	// If this is an arb opportunity, execute the arb instead of the +EV trade
+	var spent float64
 	if isArb && arbOpp != nil {
 		log.Printf("ARB DETECTED on %s: %s", ticker, arbOpp.Description)
-		return executeArbitrage(kalshiClient, arbOpp, bankroll, execConfig, cfg, notifier, db, opp)
+		spent = executeArbitrage(kalshiClient, arbOpp, bankroll, execConfig, cfg, notifier, db, opp)
+	} else {
+		// Normal +EV execution flow
+		spent = executeNormalTrade(kalshiClient, ticker, side, opp, bankroll, execConfig, cfg, notifier, db)
 	}
 
-	// Normal +EV execution flow
-	return executeNormalTrade(kalshiClient, ticker, side, opp, bankroll, execConfig, cfg, notifier, db)
+	// Mark bet in session tracker if successful
+	if spent > 0 {
+		sessionBets[betKey] = true
+	}
+	return spent
 }
 
 // executeArbitrage executes an arbitrage opportunity
@@ -687,6 +706,7 @@ func executePlayerPropOpportunity(
 	cfg Config,
 	notifier *alerts.Notifier,
 	db *positions.DB,
+	sessionBets map[string]bool,
 ) float64 {
 	// Use the full Kalshi ticker from the opportunity
 	ticker := opp.KalshiTicker
@@ -699,6 +719,31 @@ func executePlayerPropOpportunity(
 	side := kalshi.SideYes
 	if opp.Side == "under" {
 		side = kalshi.SideNo
+	}
+
+	// Check session-level duplicate (prevents re-betting same market this session)
+	betKey := fmt.Sprintf("%s:%s", ticker, side)
+	if sessionBets[betKey] {
+		log.Printf("Skipping prop %s %s: already bet on this market this session", ticker, side)
+		return 0
+	}
+
+	// Check for existing position on Kalshi - prevent duplicate bets
+	arbConfig := kalshi.ArbConfig{
+		KalshiFee:      cfg.KalshiFee,
+		MinProfitCents: 0.5,
+		MinProfitPct:   0.005,
+	}
+
+	canAdd, _, _, err := kalshiClient.CheckCanAddToPosition(ticker, side, arbConfig)
+	if err != nil {
+		log.Printf("Failed to check existing position for prop %s: %v", ticker, err)
+		return 0
+	}
+
+	if !canAdd {
+		log.Printf("Skipping prop %s %s: already have position on this market", ticker, side)
+		return 0
 	}
 
 	// Calculate bet size using real bankroll
@@ -767,6 +812,9 @@ func executePlayerPropOpportunity(
 		log.Printf("PROP ORDER FILLED: %s %d/%d contracts @ %.0f¢ avg, total cost $%.2f",
 			result.OrderID, result.FilledContracts, result.RequestedContracts,
 			result.AveragePrice, float64(result.TotalCost)/100)
+
+		// Mark bet in session tracker to prevent duplicates
+		sessionBets[betKey] = true
 
 		// Track position in database
 		if db != nil && result.FilledContracts > 0 {
