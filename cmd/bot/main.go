@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -342,8 +343,9 @@ func scanForOpportunities(
 		}
 	}
 
-	gameOpps := 0
-	propOpps := 0
+	// Collect all opportunities first, then sort by EV and execute
+	var allGameOpps []analysis.Opportunity
+	var allPropOpps []analysis.PlayerPropOpportunity
 
 	// Fetch Kalshi player props once for all games (more efficient)
 	var kalshiPlayerProps map[string][]kalshi.PlayerPropMarket
@@ -374,21 +376,12 @@ func scanForOpportunities(
 
 		// Find +EV game opportunities (moneyline, spread, total)
 		opportunities := analysis.FindAllOpportunities(consensus, cfg)
-		for _, opp := range opportunities {
-			notifier.AlertOpportunity(opp)
-			gameOpps++
-
-			// Attempt execution if Kalshi available and we have balance
-			if kalshiAvailable && bankroll > 0 {
-				executeOpportunity(kalshiClient, opp, bankroll, execConfig, mainCfg, notifier, db)
-			}
-		}
+		allGameOpps = append(allGameOpps, opportunities...)
 
 		// Fetch and analyze player props for this game
 		playerProps, err := client.GetPlayerProps(game.GameID)
 		if err == nil && len(playerProps) > 0 {
 			// Use the new function that matches BDL props with Kalshi props
-			var propOpportunities []analysis.PlayerPropOpportunity
 			if len(kalshiPlayerProps) > 0 {
 				// Collect unique player IDs and fetch their names
 				playerIDSet := make(map[int]bool)
@@ -402,7 +395,7 @@ func scanForOpportunities(
 				playerNames := client.GetPlayerNames(playerIDs)
 
 				// Use interpolation to compare any BDL line with any Kalshi line
-				propOpportunities = analysis.FindPlayerPropOpportunitiesWithInterpolation(
+				propOpportunities := analysis.FindPlayerPropOpportunitiesWithInterpolation(
 					playerProps,
 					kalshiPlayerProps,
 					playerNames,
@@ -412,15 +405,7 @@ func scanForOpportunities(
 					game.GameID,
 					cfg,
 				)
-			}
-			for _, propOpp := range propOpportunities {
-				notifier.AlertPlayerProp(propOpp)
-				propOpps++
-
-				// Attempt execution if Kalshi available and we have balance
-				if kalshiAvailable && bankroll > 0 {
-					executePlayerPropOpportunity(kalshiClient, propOpp, bankroll, execConfig, mainCfg, notifier, db)
-				}
+				allPropOpps = append(allPropOpps, propOpportunities...)
 			}
 		}
 
@@ -433,10 +418,39 @@ func scanForOpportunities(
 		}
 	}
 
-	notifier.LogScanWithProps(len(gameOdds), gameOpps, propOpps)
+	// Sort game opportunities by AdjustedEV (highest first)
+	sort.Slice(allGameOpps, func(i, j int) bool {
+		return allGameOpps[i].AdjustedEV > allGameOpps[j].AdjustedEV
+	})
+
+	// Sort player prop opportunities by AdjustedEV (highest first)
+	sort.Slice(allPropOpps, func(i, j int) bool {
+		return allPropOpps[i].AdjustedEV > allPropOpps[j].AdjustedEV
+	})
+
+	// Execute game opportunities (sorted by EV, updating bankroll after each)
+	for _, opp := range allGameOpps {
+		notifier.AlertOpportunity(opp)
+		if kalshiAvailable && bankroll > 0 {
+			spent := executeOpportunity(kalshiClient, opp, bankroll, execConfig, mainCfg, notifier, db)
+			bankroll -= spent // Update bankroll for next bet's Kelly calculation
+		}
+	}
+
+	// Execute player prop opportunities (sorted by EV, updating bankroll after each)
+	for _, propOpp := range allPropOpps {
+		notifier.AlertPlayerProp(propOpp)
+		if kalshiAvailable && bankroll > 0 {
+			spent := executePlayerPropOpportunity(kalshiClient, propOpp, bankroll, execConfig, mainCfg, notifier, db)
+			bankroll -= spent // Update bankroll for next bet's Kelly calculation
+		}
+	}
+
+	notifier.LogScanWithProps(len(gameOdds), len(allGameOpps), len(allPropOpps))
 }
 
 // executeOpportunity attempts to execute a +EV opportunity via Kalshi
+// Returns the dollar amount spent (for bankroll tracking)
 func executeOpportunity(
 	kalshiClient *kalshi.KalshiClient,
 	opp analysis.Opportunity,
@@ -445,12 +459,12 @@ func executeOpportunity(
 	cfg Config,
 	notifier *alerts.Notifier,
 	db *positions.DB,
-) {
+) float64 {
 	// Convert opportunity to Kalshi market ticker
 	ticker := mapToKalshiTicker(opp)
 	if ticker == "" {
 		log.Printf("Could not map game %d to Kalshi ticker", opp.GameID)
-		return
+		return 0
 	}
 
 	// Determine side
@@ -469,26 +483,26 @@ func executeOpportunity(
 	canAdd, isArb, arbOpp, err := kalshiClient.CheckCanAddToPosition(ticker, side, arbConfig)
 	if err != nil {
 		log.Printf("Failed to check existing position for %s: %v", ticker, err)
-		return
+		return 0
 	}
 
 	if !canAdd {
 		log.Printf("Skipping %s %s: already have position on this market (no arb available)", ticker, side)
-		return
+		return 0
 	}
 
 	// If this is an arb opportunity, execute the arb instead of the +EV trade
 	if isArb && arbOpp != nil {
 		log.Printf("ARB DETECTED on %s: %s", ticker, arbOpp.Description)
-		executeArbitrage(kalshiClient, arbOpp, bankroll, execConfig, cfg, notifier, db, opp)
-		return
+		return executeArbitrage(kalshiClient, arbOpp, bankroll, execConfig, cfg, notifier, db, opp)
 	}
 
 	// Normal +EV execution flow
-	executeNormalTrade(kalshiClient, ticker, side, opp, bankroll, execConfig, cfg, notifier, db)
+	return executeNormalTrade(kalshiClient, ticker, side, opp, bankroll, execConfig, cfg, notifier, db)
 }
 
 // executeArbitrage executes an arbitrage opportunity
+// Returns the dollar amount spent
 func executeArbitrage(
 	kalshiClient *kalshi.KalshiClient,
 	arb *kalshi.ArbOpportunity,
@@ -498,7 +512,7 @@ func executeArbitrage(
 	notifier *alerts.Notifier,
 	db *positions.DB,
 	opp analysis.Opportunity,
-) {
+) float64 {
 	// Calculate max contracts based on bankroll
 	// Cost per arb = YES price + NO price
 	costPerContractCents := arb.TotalCost
@@ -507,7 +521,7 @@ func executeArbitrage(
 	contracts := min(arb.MaxContracts, maxAffordable)
 	if contracts < execConfig.MinLiquidityContracts {
 		log.Printf("Arb size (%d contracts) below minimum, skipping", contracts)
-		return
+		return 0
 	}
 
 	// Apply max bet limit
@@ -520,7 +534,7 @@ func executeArbitrage(
 		profit := kalshi.CalculateArbProfit(arb.YesPrice, arb.NoPrice, contracts, cfg.KalshiFee)
 		log.Printf("DRY RUN ARB: Would buy %d contracts YES@%d¢ + NO@%d¢. Guaranteed profit: $%.2f",
 			contracts, arb.YesPrice, arb.NoPrice, profit/100)
-		return
+		return 0 // Dry run doesn't spend money
 	}
 
 	log.Printf("Executing ARB: %s %d contracts (YES@%d¢ + NO@%d¢)", arb.Ticker, contracts, arb.YesPrice, arb.NoPrice)
@@ -528,7 +542,7 @@ func executeArbitrage(
 	yesResult, noResult, err := kalshiClient.ExecuteArb(arb, contracts, execConfig)
 	if err != nil {
 		log.Printf("Arb execution error: %v", err)
-		return
+		return 0
 	}
 
 	if yesResult != nil && yesResult.Success {
@@ -538,7 +552,15 @@ func executeArbitrage(
 		log.Printf("ARB NO LEG: filled %d @ %.0f¢", noResult.FilledContracts, noResult.AveragePrice)
 	}
 
-	// Calculate actual profit
+	// Calculate actual profit and total cost
+	totalSpent := 0.0
+	if yesResult != nil && yesResult.FilledContracts > 0 {
+		totalSpent += float64(yesResult.TotalCost) / 100
+	}
+	if noResult != nil && noResult.FilledContracts > 0 {
+		totalSpent += float64(noResult.TotalCost) / 100
+	}
+
 	if yesResult != nil && noResult != nil && yesResult.FilledContracts > 0 && noResult.FilledContracts > 0 {
 		matchedContracts := min(yesResult.FilledContracts, noResult.FilledContracts)
 		profit := kalshi.CalculateArbProfit(
@@ -549,9 +571,12 @@ func executeArbitrage(
 		)
 		log.Printf("ARB COMPLETE: %d matched contracts. Guaranteed profit: $%.2f", matchedContracts, profit/100)
 	}
+
+	return totalSpent
 }
 
 // executeNormalTrade executes a standard +EV trade
+// Returns the dollar amount spent
 func executeNormalTrade(
 	kalshiClient *kalshi.KalshiClient,
 	ticker string,
@@ -562,7 +587,7 @@ func executeNormalTrade(
 	cfg Config,
 	notifier *alerts.Notifier,
 	db *positions.DB,
-) {
+) float64 {
 	// Calculate bet size using real bankroll
 	priceInCents := int(opp.KalshiPrice * 100)
 	contracts := analysis.CalculateKellyContracts(
@@ -576,14 +601,14 @@ func executeNormalTrade(
 
 	if contracts < execConfig.MinLiquidityContracts {
 		log.Printf("Kelly bet size (%d contracts) below minimum, skipping", contracts)
-		return
+		return 0
 	}
 
 	// Fetch order book and check liquidity/slippage
 	book, err := kalshiClient.GetOrderBook(ticker)
 	if err != nil {
 		log.Printf("Failed to fetch order book for %s: %v", ticker, err)
-		return
+		return 0
 	}
 
 	// Calculate slippage
@@ -595,7 +620,7 @@ func executeNormalTrade(
 			log.Printf("Slippage %.2f%% exceeds max %.2f%% for %s, skipping",
 				slippage.SlippagePct*100, execConfig.MaxSlippagePct*100, ticker)
 		}
-		return
+		return 0
 	}
 
 	// Recalculate EV with actual fill price
@@ -605,7 +630,7 @@ func executeNormalTrade(
 	if adjustedEV < cfg.EVThreshold {
 		log.Printf("EV degraded from %.2f%% to %.2f%% due to slippage, skipping %s",
 			opp.AdjustedEV*100, adjustedEV*100, ticker)
-		return
+		return 0
 	}
 
 	// Log execution attempt
@@ -622,7 +647,7 @@ func executeNormalTrade(
 	result, err := kalshiClient.PlaceOrder(ticker, side, kalshi.ActionBuy, contracts, execConfigWithEV)
 	if err != nil {
 		log.Printf("Order placement error: %v", err)
-		return
+		return 0
 	}
 
 	if result.Success {
@@ -645,12 +670,15 @@ func executeNormalTrade(
 				log.Printf("Failed to track position: %v", err)
 			}
 		}
-	} else {
-		log.Printf("Order rejected: %s", result.RejectionReason)
+		return float64(result.TotalCost) / 100
 	}
+
+	log.Printf("Order rejected: %s", result.RejectionReason)
+	return 0
 }
 
 // executePlayerPropOpportunity attempts to execute a +EV player prop opportunity via Kalshi
+// Returns the dollar amount spent (for bankroll tracking)
 func executePlayerPropOpportunity(
 	kalshiClient *kalshi.KalshiClient,
 	opp analysis.PlayerPropOpportunity,
@@ -659,12 +687,12 @@ func executePlayerPropOpportunity(
 	cfg Config,
 	notifier *alerts.Notifier,
 	db *positions.DB,
-) {
+) float64 {
 	// Use the full Kalshi ticker from the opportunity
 	ticker := opp.KalshiTicker
 	if ticker == "" {
 		log.Printf("No Kalshi ticker for player prop: %s %s", opp.PlayerName, opp.PropType)
-		return
+		return 0
 	}
 
 	// Determine side (over = YES, under = NO)
@@ -686,14 +714,14 @@ func executePlayerPropOpportunity(
 
 	if contracts < execConfig.MinLiquidityContracts {
 		log.Printf("Kelly bet size (%d contracts) below minimum for prop, skipping", contracts)
-		return
+		return 0
 	}
 
 	// Fetch order book and check liquidity/slippage
 	book, err := kalshiClient.GetOrderBook(ticker)
 	if err != nil {
 		log.Printf("Failed to fetch order book for prop %s: %v", ticker, err)
-		return
+		return 0
 	}
 
 	// Calculate slippage
@@ -705,7 +733,7 @@ func executePlayerPropOpportunity(
 			log.Printf("Slippage %.2f%% exceeds max %.2f%% for prop %s, skipping",
 				slippage.SlippagePct*100, execConfig.MaxSlippagePct*100, ticker)
 		}
-		return
+		return 0
 	}
 
 	// Recalculate EV with actual fill price
@@ -715,7 +743,7 @@ func executePlayerPropOpportunity(
 	if adjustedEV < cfg.EVThreshold {
 		log.Printf("Prop EV degraded from %.2f%% to %.2f%% due to slippage, skipping %s",
 			opp.AdjustedEV*100, adjustedEV*100, ticker)
-		return
+		return 0
 	}
 
 	// Log execution attempt
@@ -732,7 +760,7 @@ func executePlayerPropOpportunity(
 	result, err := kalshiClient.PlaceOrder(ticker, side, kalshi.ActionBuy, contracts, execConfigWithEV)
 	if err != nil {
 		log.Printf("Prop order placement error: %v", err)
-		return
+		return 0
 	}
 
 	if result.Success {
@@ -755,9 +783,11 @@ func executePlayerPropOpportunity(
 				log.Printf("Failed to track prop position: %v", err)
 			}
 		}
-	} else {
-		log.Printf("Prop order rejected: %s", result.RejectionReason)
+		return float64(result.TotalCost) / 100
 	}
+
+	log.Printf("Prop order rejected: %s", result.RejectionReason)
+	return 0
 }
 
 // mapToKalshiTicker maps a BallDontLie game opportunity to a Kalshi market ticker
