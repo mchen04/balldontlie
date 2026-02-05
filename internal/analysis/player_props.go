@@ -266,12 +266,10 @@ func FindPlayerPropOpportunitiesWithKalshi(
 
 		// Calculate Kalshi prices from bid/ask
 		// For OVER (YES): use yes_ask (price to buy YES)
-		// For UNDER (NO): use no_ask (price to buy NO), or 100 - yes_bid
+		// For UNDER (NO): use no_ask (price to buy NO)
+		// Note: We only use actual ask prices - if NoAsk is 0, there's no seller
 		kalshiOverPrice := float64(matchedKalshi.YesAsk) / 100.0
 		kalshiUnderPrice := float64(matchedKalshi.NoAsk) / 100.0
-		if kalshiUnderPrice == 0 && matchedKalshi.YesBid > 0 {
-			kalshiUnderPrice = float64(100-matchedKalshi.YesBid) / 100.0
-		}
 
 		// Check OVER opportunity (YES on Kalshi)
 		if kalshiOverPrice > 0 && kalshiOverPrice < 1 {
@@ -400,9 +398,8 @@ func FindPlayerPropOpportunitiesWithInterpolation(
 		}
 
 		// Find all Kalshi markets for this player
-		normalizedName := kalshi.NormalizePlayerName(playerName)
 		for _, km := range kalshiMarkets {
-			if kalshi.NormalizePlayerName(km.PlayerName) != normalizedName {
+			if !kalshi.PlayerNamesMatch(playerName, km.PlayerName) {
 				continue
 			}
 
@@ -439,12 +436,9 @@ func FindPlayerPropOpportunitiesWithInterpolation(
 				continue
 			}
 
-			// Get Kalshi prices
+			// Get Kalshi prices - only use actual ask prices (no seller = no trade)
 			kalshiOverPrice := float64(km.YesAsk) / 100.0
 			kalshiUnderPrice := float64(km.NoAsk) / 100.0
-			if kalshiUnderPrice == 0 && km.YesBid > 0 {
-				kalshiUnderPrice = float64(100-km.YesBid) / 100.0
-			}
 
 			// Check OVER opportunity
 			if kalshiOverPrice > 0 && kalshiOverPrice < 1 {

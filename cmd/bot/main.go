@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -355,9 +356,11 @@ func scanForOpportunities(
 	}
 
 	for _, game := range gameOdds {
-		// Skip games that have started (status will be "Final" or similar for completed games)
-		// For scheduled games, status is typically a datetime or empty
-		if game.Game.Status == "Final" || game.Game.Status == "In Progress" {
+		// Skip games that have started or finished
+		// Status values: "Final", "1st Qtr", "2nd Qtr", "Halftime", "3rd Qtr", "4th Qtr", "OT"
+		// For scheduled games, status is typically a datetime (e.g., "2026-02-05T03:00:00Z")
+		status := game.Game.Status
+		if status == "Final" || strings.Contains(status, "Qtr") || status == "Halftime" || status == "OT" {
 			continue
 		}
 

@@ -311,19 +311,26 @@ func EstimateProbabilityAtLine(bdlLine float64, bdlProb float64, kalshiLine floa
 	// First estimate SD, then infer mean
 	// Use BDL line as initial estimate for mean to get SD
 	estimatedSD := DefaultStdDev(propType, bdlLine)
+
+	// Continuity correction for input: BDL "over 23.5" = P(X > 23.5)
+	// For discrete outcomes, this means P(X >= 24)
 	mean := InferNormalMean(float64(bdlThreshold)-0.5, bdlProb, estimatedSD)
 	if mean <= 0 {
 		return 0
 	}
 
-	return NormalCDFOver(kalshiLine, mean, estimatedSD)
+	// Continuity correction for output: Kalshi "25+" = P(X >= 25)
+	// In continuous terms: P(X >= 25) = P(X > 24.5)
+	// So use kalshiLine - 0.5 as the threshold
+	return NormalCDFOver(kalshiLine-0.5, mean, estimatedSD)
 }
 
 // EstimateProbabilityFromMultipleLines estimates probability using multiple BDL lines
-// This is more accurate as it can fit both mean and variance
+// For each BDL line, shifts its probability to Kalshi's line, then averages
+// This is more accurate than averaging means because it preserves book-level information
 func EstimateProbabilityFromMultipleLines(
 	bdlLines []float64, // e.g., [18.5, 19.5, 20.5]
-	bdlProbs []float64, // corresponding probabilities
+	bdlProbs []float64, // corresponding probabilities (consensus at each line)
 	kalshiLine float64,
 	propType string,
 ) float64 {
@@ -336,85 +343,42 @@ func EstimateProbabilityFromMultipleLines(
 		return EstimateProbabilityAtLine(bdlLines[0], bdlProbs[0], kalshiLine, propType)
 	}
 
-	distType := PropDistributionType(propType)
+	// CORRECT APPROACH: Shift each line's probability to Kalshi's line, then average
+	// This is mathematically correct because:
+	// 1. Each BDL line has a consensus probability from multiple books
+	// 2. We shift each of those to Kalshi's line using the distribution
+	// 3. Then average the shifted probabilities
+	//
+	// Example: BDL has lines at 23.5 (55%), 24.5 (48%), 25.5 (40%), Kalshi is 25
+	// - Shift 23.5@55% to 25 → ~42%
+	// - Shift 24.5@48% to 25 → ~45%
+	// - Shift 25.5@40% to 25 → ~43%
+	// - Average: (42 + 45 + 43) / 3 = 43.3%
 
-	if distType == "negbin" {
-		// For Negative Binomial, average the inferred means
-		// Use consistent dispersion based on average line
-		avgLine := 0.0
-		for _, line := range bdlLines {
-			avgLine += line
-		}
-		avgLine /= float64(len(bdlLines))
-		r := DefaultDispersion(propType, avgLine)
+	var shiftedProbSum float64
+	var validCount int
 
-		var muSum float64
-		var validCount int
-		for i, line := range bdlLines {
-			threshold := int(line) + 1
-			mu := InferNegBinMean(threshold, bdlProbs[i], r)
-			if mu > 0 {
-				muSum += mu
-				validCount++
-			}
-		}
-		if validCount == 0 {
-			return 0
-		}
-		avgMu := muSum / float64(validCount)
+	for i, bdlLine := range bdlLines {
+		bdlProb := bdlProbs[i]
 
-		// Recalculate r with averaged mean
-		r = DefaultDispersion(propType, avgMu)
-		return NegBinCDFOver(int(kalshiLine), avgMu, r)
+		// Skip invalid probabilities
+		if bdlProb <= 0 || bdlProb >= 1 {
+			continue
+		}
+
+		// Shift this line's probability to Kalshi's line
+		shiftedProb := EstimateProbabilityAtLine(bdlLine, bdlProb, kalshiLine, propType)
+
+		// Only count valid shifted probabilities
+		if shiftedProb > 0 && shiftedProb < 1 {
+			shiftedProbSum += shiftedProb
+			validCount++
+		}
 	}
 
-	if distType == "poisson" {
-		// Legacy: For Poisson, average the inferred lambdas
-		var lambdaSum float64
-		for i, line := range bdlLines {
-			threshold := int(line) + 1
-			lambda := InferPoissonMean(threshold, bdlProbs[i])
-			if lambda > 0 {
-				lambdaSum += lambda
-			}
-		}
-		avgLambda := lambdaSum / float64(len(bdlLines))
-		return PoissonCDFOver(int(kalshiLine), avgLambda)
+	if validCount == 0 {
+		return 0
 	}
 
-	// For Normal, we can estimate both mean and SD from multiple lines
-	// Use least squares fit or simple two-point estimation
-
-	// Simple approach: use two lines to estimate mean and SD
-	if len(bdlLines) >= 2 {
-		// Sort by line value
-		line1, prob1 := bdlLines[0], bdlProbs[0]
-		line2, prob2 := bdlLines[len(bdlLines)-1], bdlProbs[len(bdlLines)-1]
-
-		threshold1 := float64(int(line1)+1) - 0.5
-		threshold2 := float64(int(line2)+1) - 0.5
-
-		// z1 = (threshold1 - μ) / σ where Φ(z1) = 1 - prob1
-		// z2 = (threshold2 - μ) / σ where Φ(z2) = 1 - prob2
-		z1 := InverseNormalCDF(1 - prob1)
-		z2 := InverseNormalCDF(1 - prob2)
-
-		if math.Abs(z1-z2) < 0.001 {
-			// Lines too close, fall back to single-line
-			return EstimateProbabilityAtLine(bdlLines[0], bdlProbs[0], kalshiLine, propType)
-		}
-
-		// Solve: threshold1 = μ + σ*z1, threshold2 = μ + σ*z2
-		// σ = (threshold2 - threshold1) / (z2 - z1)
-		// μ = threshold1 - σ*z1
-		sigma := (threshold2 - threshold1) / (z2 - z1)
-		if sigma <= 0 {
-			sigma = DefaultStdDev(propType, (line1+line2)/2)
-		}
-		mu := threshold1 - sigma*z1
-
-		return NormalCDFOver(kalshiLine, mu, sigma)
-	}
-
-	return EstimateProbabilityAtLine(bdlLines[0], bdlProbs[0], kalshiLine, propType)
+	return shiftedProbSum / float64(validCount)
 }
