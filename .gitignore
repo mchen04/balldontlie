@@ -23,3 +23,10 @@ Thumbs.db
 # Test artifacts
 coverage.out
 *.test
+test_logs/
+
+# Debug/test tools
+debug_matching
+test_full
+test_distribution
+line_research
