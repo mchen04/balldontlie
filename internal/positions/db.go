@@ -14,8 +14,10 @@ type Position struct {
 	GameID     string
 	HomeTeam   string
 	AwayTeam   string
-	MarketType string // "moneyline", "spread", "total"
-	Side       string // "home", "away", "over", "under"
+	MarketType string // "moneyline", "spread", "total", "prop_points", etc.
+	Side       string // "home", "away", "over", "under", or player-specific
+	Ticker     string // Full Kalshi ticker (e.g., "KXNBAPTS-26FEB05GSWPHX-GSWDGREEN23-10")
+	BetSide    string // "yes" or "no" for duplicate prevention
 	EntryPrice float64
 	Contracts  int
 	CreatedAt  time.Time
@@ -50,6 +52,8 @@ func createTables(db *sql.DB) error {
 		away_team TEXT NOT NULL,
 		market_type TEXT NOT NULL,
 		side TEXT NOT NULL,
+		ticker TEXT DEFAULT '',
+		bet_side TEXT DEFAULT '',
 		entry_price REAL NOT NULL,
 		contracts INTEGER NOT NULL,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -57,12 +61,25 @@ func createTables(db *sql.DB) error {
 
 	CREATE INDEX IF NOT EXISTS idx_positions_game ON positions(game_id);
 	CREATE INDEX IF NOT EXISTS idx_positions_active ON positions(market_type, side);
+	CREATE INDEX IF NOT EXISTS idx_positions_ticker ON positions(ticker, bet_side);
 	`
 
 	_, err := db.Exec(schema)
 	if err != nil {
 		return fmt.Errorf("creating tables: %w", err)
 	}
+
+	// Run migrations to add new columns if they don't exist
+	migrations := []string{
+		"ALTER TABLE positions ADD COLUMN ticker TEXT DEFAULT ''",
+		"ALTER TABLE positions ADD COLUMN bet_side TEXT DEFAULT ''",
+	}
+
+	for _, migration := range migrations {
+		// SQLite will error if column already exists, which is fine
+		_, _ = db.Exec(migration)
+	}
+
 	return nil
 }
 
@@ -74,14 +91,29 @@ func (d *DB) Close() error {
 // AddPosition adds a new position
 func (d *DB) AddPosition(pos Position) (int64, error) {
 	result, err := d.db.Exec(`
-		INSERT INTO positions (game_id, home_team, away_team, market_type, side, entry_price, contracts)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, pos.GameID, pos.HomeTeam, pos.AwayTeam, pos.MarketType, pos.Side, pos.EntryPrice, pos.Contracts)
+		INSERT INTO positions (game_id, home_team, away_team, market_type, side, ticker, bet_side, entry_price, contracts)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, pos.GameID, pos.HomeTeam, pos.AwayTeam, pos.MarketType, pos.Side, pos.Ticker, pos.BetSide, pos.EntryPrice, pos.Contracts)
 	if err != nil {
 		return 0, fmt.Errorf("inserting position: %w", err)
 	}
 
 	return result.LastInsertId()
+}
+
+// HasPositionOnTicker checks if we already have a position on a specific ticker+side
+func (d *DB) HasPositionOnTicker(ticker, betSide string) (bool, error) {
+	if ticker == "" {
+		return false, nil // No ticker to check
+	}
+	var count int
+	err := d.db.QueryRow(`
+		SELECT COUNT(*) FROM positions WHERE ticker = ? AND bet_side = ?
+	`, ticker, betSide).Scan(&count)
+	if err != nil {
+		return false, fmt.Errorf("checking position: %w", err)
+	}
+	return count > 0, nil
 }
 
 // GetPosition retrieves a position by ID
