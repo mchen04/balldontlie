@@ -188,6 +188,9 @@ func MatchesLine(bdlLine float64, kalshiLine float64, isOver bool) bool {
 }
 
 // FindMatchingKalshiProp finds a Kalshi market that matches a Ball Don't Lie prop
+// IMPORTANT: Only matches when outcomes are mathematically equivalent:
+//   - BDL "over 24.5" = need 25+ to win → matches Kalshi "25+"
+//   - BDL "over 25.0" = need 26+ to win (25 is push) → matches Kalshi "26+" (NOT "25+")
 func FindMatchingKalshiProp(
 	playerName string,
 	propType string,
@@ -195,6 +198,12 @@ func FindMatchingKalshiProp(
 	kalshiProps []PlayerPropMarket,
 ) *PlayerPropMarket {
 	normalizedName := NormalizePlayerName(playerName)
+
+	// Calculate the Kalshi line that represents the SAME outcome as BDL
+	// BDL "over X.5" needs (X+1)+ to win → Kalshi line = X+1
+	// BDL "over X.0" needs (X+1)+ to win (X is push) → Kalshi line = X+1
+	// In both cases: expectedKalshiLine = ceil(bdlLine + 0.5) = int(bdlLine) + 1
+	expectedKalshiLine := float64(int(bdlLine) + 1)
 
 	for _, kp := range kalshiProps {
 		if kp.PropType != propType {
@@ -206,11 +215,8 @@ func FindMatchingKalshiProp(
 			continue
 		}
 
-		// Check line match (Kalshi uses milestone format)
-		// BDL "over 24.5" -> Kalshi "25+"
-		kalshiLine := kp.Line
-		expectedLine := float64(int(bdlLine) + 1)
-		if kalshiLine == expectedLine || kalshiLine == bdlLine+0.5 {
+		// Only match if Kalshi line equals expected line (same mathematical outcome)
+		if kp.Line == expectedKalshiLine {
 			return &kp
 		}
 	}

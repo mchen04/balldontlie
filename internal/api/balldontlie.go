@@ -25,14 +25,18 @@ type BallDontLieClient struct {
 	gamesCache     map[int]GameInfo
 	gamesCacheDate string
 	gamesCacheTime time.Time
+
+	// Cache for player names (persists for session)
+	playerCache map[int]string // player_id -> "FirstName LastName"
 }
 
 // NewBallDontLieClient creates a new API client
 func NewBallDontLieClient(apiKey string) *BallDontLieClient {
 	return &BallDontLieClient{
-		apiKey:     apiKey,
-		client:     NewRateLimitedClient(requestsPerMinute, requestTimeout, maxRetries),
-		gamesCache: make(map[int]GameInfo),
+		apiKey:      apiKey,
+		client:      NewRateLimitedClient(requestsPerMinute, requestTimeout, maxRetries),
+		gamesCache:  make(map[int]GameInfo),
+		playerCache: make(map[int]string),
 	}
 }
 
@@ -388,6 +392,61 @@ type Player struct {
 	LastName  string `json:"last_name"`
 	Position  string `json:"position"`
 	TeamID    int    `json:"team_id"`
+}
+
+// FullName returns the player's full name
+func (p *Player) FullName() string {
+	return fmt.Sprintf("%s %s", p.FirstName, p.LastName)
+}
+
+// PlayerResponse represents the API response for a single player
+type PlayerResponse struct {
+	Data Player `json:"data"`
+}
+
+// GetPlayerName fetches a player's name by ID, using cache when available
+// Note: Uses v1 API for player data since v2 doesn't have a players endpoint
+func (c *BallDontLieClient) GetPlayerName(playerID int) (string, error) {
+	// Check cache first
+	if name, ok := c.playerCache[playerID]; ok {
+		return name, nil
+	}
+
+	// Fetch from v1 API (v2 doesn't have players endpoint)
+	headers := map[string]string{
+		"Authorization": c.apiKey,
+	}
+
+	url := fmt.Sprintf("%s/players/%d", baseURL, playerID)
+	body, err := c.client.Get(url, headers)
+	if err != nil {
+		return "", fmt.Errorf("fetching player %d: %w", playerID, err)
+	}
+
+	var resp PlayerResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return "", fmt.Errorf("parsing player response: %w", err)
+	}
+
+	fullName := resp.Data.FullName()
+	c.playerCache[playerID] = fullName
+	return fullName, nil
+}
+
+// GetPlayerNames fetches names for multiple player IDs, using cache
+func (c *BallDontLieClient) GetPlayerNames(playerIDs []int) map[int]string {
+	result := make(map[int]string)
+
+	for _, id := range playerIDs {
+		name, err := c.GetPlayerName(id)
+		if err != nil {
+			log.Printf("Warning: could not fetch player %d: %v", id, err)
+			continue
+		}
+		result[id] = name
+	}
+
+	return result
 }
 
 // PlayerPropMarket represents the market odds for a player prop

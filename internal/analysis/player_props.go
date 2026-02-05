@@ -206,17 +206,18 @@ func groupKey(playerID int, propType string, line float64) string {
 
 // FindPlayerPropOpportunitiesWithKalshi finds +EV player prop bets using direct Kalshi data
 // This matches Ball Don't Lie consensus with Kalshi prices fetched directly from Kalshi API
+// playerNames maps BDL player_id to player name (required for proper matching)
 func FindPlayerPropOpportunitiesWithKalshi(
 	bdlProps []api.PlayerProp,
 	kalshiProps map[string][]kalshi.PlayerPropMarket, // keyed by prop type
+	playerNames map[int]string, // BDL player_id -> "FirstName LastName"
 	gameDate, homeTeam, awayTeam string,
 	gameID int,
 	cfg Config,
 ) []PlayerPropOpportunity {
 	var opportunities []PlayerPropOpportunity
 
-	// Group BDL props by player name + prop type + line
-	// Use player name as key since BDL only has player_id, not name in v2
+	// Group BDL props by player ID + prop type + line
 	type propKey struct {
 		PlayerID int
 		PropType string
@@ -244,31 +245,21 @@ func FindPlayerPropOpportunitiesWithKalshi(
 			continue
 		}
 
-		// Find matching Kalshi market
+		// Get player name from the map
+		playerName, ok := playerNames[key.PlayerID]
+		if !ok || playerName == "" {
+			// Can't match without player name
+			continue
+		}
+
+		// Find matching Kalshi market by BOTH player name AND line
 		kalshiMarkets, ok := kalshiProps[key.PropType]
 		if !ok || len(kalshiMarkets) == 0 {
 			continue
 		}
 
-		// Try to match by line - BDL uses "over 24.5", Kalshi uses "25+"
-		// The Kalshi line should be ceil(BDL line)
-		expectedKalshiLine := float64(int(key.Line) + 1)
-		if key.Line == float64(int(key.Line)) {
-			// If BDL line is whole number (e.g., 25.0), Kalshi line is same
-			expectedKalshiLine = key.Line
-		}
-
-		var matchedKalshi *kalshi.PlayerPropMarket
-		for _, km := range kalshiMarkets {
-			if km.Line == expectedKalshiLine || km.Line == key.Line+0.5 || km.Line == key.Line {
-				// Name matching is tricky without player names in BDL
-				// For now, we'll match by line only within the same prop type
-				// This could match wrong player if same line, but better than nothing
-				matchedKalshi = &km
-				break
-			}
-		}
-
+		// Use the proper matching function that checks player name AND line
+		matchedKalshi := kalshi.FindMatchingKalshiProp(playerName, key.PropType, key.Line, kalshiMarkets)
 		if matchedKalshi == nil {
 			continue
 		}
@@ -292,7 +283,7 @@ func FindPlayerPropOpportunitiesWithKalshi(
 					HomeTeam:    homeTeam,
 					AwayTeam:    awayTeam,
 					PlayerID:    key.PlayerID,
-					PlayerName:  matchedKalshi.PlayerName,
+					PlayerName:  playerName,
 					PropType:    key.PropType,
 					Line:        matchedKalshi.Line,
 					Side:        "over",
@@ -316,7 +307,7 @@ func FindPlayerPropOpportunitiesWithKalshi(
 					HomeTeam:    homeTeam,
 					AwayTeam:    awayTeam,
 					PlayerID:    key.PlayerID,
-					PlayerName:  matchedKalshi.PlayerName,
+					PlayerName:  playerName,
 					PropType:    key.PropType,
 					Line:        matchedKalshi.Line,
 					Side:        "under",
@@ -327,6 +318,180 @@ func FindPlayerPropOpportunitiesWithKalshi(
 					KellyStake:  CalculateKelly(consensus.UnderTrueProb, kalshiUnderPrice, cfg.KellyFraction),
 					BookCount:   consensus.BookCount,
 				})
+			}
+		}
+	}
+
+	return opportunities
+}
+
+// FindPlayerPropOpportunitiesWithInterpolation finds +EV player prop bets using distribution interpolation
+// This allows comparing BDL lines (e.g., over 19.5) with different Kalshi lines (e.g., 25+)
+// by fitting a probability distribution and estimating the true probability at any threshold
+func FindPlayerPropOpportunitiesWithInterpolation(
+	bdlProps []api.PlayerProp,
+	kalshiProps map[string][]kalshi.PlayerPropMarket,
+	playerNames map[int]string,
+	gameDate, homeTeam, awayTeam string,
+	gameID int,
+	cfg Config,
+) []PlayerPropOpportunity {
+	var opportunities []PlayerPropOpportunity
+
+	// Group BDL props by player ID + prop type (NOT line - we want all lines for a player)
+	type playerPropKey struct {
+		PlayerID int
+		PropType string
+	}
+	type lineData struct {
+		Line      float64
+		OverProb  float64
+		UnderProb float64
+		BookCount int
+	}
+	playerProps := make(map[playerPropKey][]lineData)
+
+	// First pass: collect all BDL lines for each player+propType
+	type propKey struct {
+		PlayerID int
+		PropType string
+		Line     float64
+	}
+	grouped := make(map[propKey][]api.PlayerProp)
+
+	for _, prop := range bdlProps {
+		if !api.IsKalshiSupportedPropType(prop.PropType) {
+			continue
+		}
+		key := propKey{
+			PlayerID: prop.PlayerID,
+			PropType: prop.PropType,
+			Line:     prop.Line(),
+		}
+		grouped[key] = append(grouped[key], prop)
+	}
+
+	// Calculate consensus for each line
+	for key, group := range grouped {
+		consensus := calculateBDLConsensus(group)
+		if consensus == nil || consensus.BookCount < cfg.MinBookCount {
+			continue
+		}
+
+		ppKey := playerPropKey{PlayerID: key.PlayerID, PropType: key.PropType}
+		playerProps[ppKey] = append(playerProps[ppKey], lineData{
+			Line:      key.Line,
+			OverProb:  consensus.OverTrueProb,
+			UnderProb: consensus.UnderTrueProb,
+			BookCount: consensus.BookCount,
+		})
+	}
+
+	// For each player+propType, find Kalshi markets and estimate probabilities
+	for ppKey, lines := range playerProps {
+		playerName, ok := playerNames[ppKey.PlayerID]
+		if !ok || playerName == "" {
+			continue
+		}
+
+		kalshiMarkets, ok := kalshiProps[ppKey.PropType]
+		if !ok || len(kalshiMarkets) == 0 {
+			continue
+		}
+
+		// Find all Kalshi markets for this player
+		normalizedName := kalshi.NormalizePlayerName(playerName)
+		for _, km := range kalshiMarkets {
+			if kalshi.NormalizePlayerName(km.PlayerName) != normalizedName {
+				continue
+			}
+
+			// Sort BDL lines and extract probabilities
+			var bdlLines []float64
+			var bdlOverProbs []float64
+			var bdlUnderProbs []float64
+			var totalBooks int
+
+			for _, ld := range lines {
+				bdlLines = append(bdlLines, ld.Line)
+				bdlOverProbs = append(bdlOverProbs, ld.OverProb)
+				bdlUnderProbs = append(bdlUnderProbs, ld.UnderProb)
+				totalBooks += ld.BookCount
+			}
+			avgBooks := totalBooks / len(lines)
+
+			// Use distribution interpolation to estimate probability at Kalshi line
+			kalshiLine := km.Line
+
+			// For OVER: estimate P(X >= kalshiLine)
+			var estimatedOverProb float64
+			if len(bdlLines) == 1 {
+				estimatedOverProb = EstimateProbabilityAtLine(bdlLines[0], bdlOverProbs[0], kalshiLine, ppKey.PropType)
+			} else {
+				estimatedOverProb = EstimateProbabilityFromMultipleLines(bdlLines, bdlOverProbs, kalshiLine, ppKey.PropType)
+			}
+
+			// For UNDER: P(X < kalshiLine) = 1 - P(X >= kalshiLine)
+			estimatedUnderProb := 1 - estimatedOverProb
+
+			// Skip if estimation failed
+			if estimatedOverProb <= 0 || estimatedOverProb >= 1 {
+				continue
+			}
+
+			// Get Kalshi prices
+			kalshiOverPrice := float64(km.YesAsk) / 100.0
+			kalshiUnderPrice := float64(km.NoAsk) / 100.0
+			if kalshiUnderPrice == 0 && km.YesBid > 0 {
+				kalshiUnderPrice = float64(100-km.YesBid) / 100.0
+			}
+
+			// Check OVER opportunity
+			if kalshiOverPrice > 0 && kalshiOverPrice < 1 {
+				adjEV := CalculateAdjustedEV(estimatedOverProb, kalshiOverPrice, cfg.KalshiFee)
+				if adjEV >= cfg.EVThreshold {
+					opportunities = append(opportunities, PlayerPropOpportunity{
+						GameID:      gameID,
+						GameDate:    gameDate,
+						HomeTeam:    homeTeam,
+						AwayTeam:    awayTeam,
+						PlayerID:    ppKey.PlayerID,
+						PlayerName:  playerName,
+						PropType:    ppKey.PropType,
+						Line:        kalshiLine,
+						Side:        "over",
+						TrueProb:    estimatedOverProb,
+						KalshiPrice: kalshiOverPrice,
+						RawEV:       CalculateEV(estimatedOverProb, kalshiOverPrice),
+						AdjustedEV:  adjEV,
+						KellyStake:  CalculateKelly(estimatedOverProb, kalshiOverPrice, cfg.KellyFraction),
+						BookCount:   avgBooks,
+					})
+				}
+			}
+
+			// Check UNDER opportunity
+			if kalshiUnderPrice > 0 && kalshiUnderPrice < 1 {
+				adjEV := CalculateAdjustedEV(estimatedUnderProb, kalshiUnderPrice, cfg.KalshiFee)
+				if adjEV >= cfg.EVThreshold {
+					opportunities = append(opportunities, PlayerPropOpportunity{
+						GameID:      gameID,
+						GameDate:    gameDate,
+						HomeTeam:    homeTeam,
+						AwayTeam:    awayTeam,
+						PlayerID:    ppKey.PlayerID,
+						PlayerName:  playerName,
+						PropType:    ppKey.PropType,
+						Line:        kalshiLine,
+						Side:        "under",
+						TrueProb:    estimatedUnderProb,
+						KalshiPrice: kalshiUnderPrice,
+						RawEV:       CalculateEV(estimatedUnderProb, kalshiUnderPrice),
+						AdjustedEV:  adjEV,
+						KellyStake:  CalculateKelly(estimatedUnderProb, kalshiUnderPrice, cfg.KellyFraction),
+						BookCount:   avgBooks,
+					})
+				}
 			}
 		}
 	}

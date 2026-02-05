@@ -387,9 +387,22 @@ func scanForOpportunities(
 			// Use the new function that matches BDL props with Kalshi props
 			var propOpportunities []analysis.PlayerPropOpportunity
 			if len(kalshiPlayerProps) > 0 {
-				propOpportunities = analysis.FindPlayerPropOpportunitiesWithKalshi(
+				// Collect unique player IDs and fetch their names
+				playerIDSet := make(map[int]bool)
+				for _, prop := range playerProps {
+					playerIDSet[prop.PlayerID] = true
+				}
+				playerIDs := make([]int, 0, len(playerIDSet))
+				for id := range playerIDSet {
+					playerIDs = append(playerIDs, id)
+				}
+				playerNames := client.GetPlayerNames(playerIDs)
+
+				// Use interpolation to compare any BDL line with any Kalshi line
+				propOpportunities = analysis.FindPlayerPropOpportunitiesWithInterpolation(
 					playerProps,
 					kalshiPlayerProps,
+					playerNames,
 					game.Game.Date,
 					game.Game.HomeTeam.Abbreviation,
 					game.Game.VisitorTeam.Abbreviation,
@@ -573,8 +586,12 @@ func executeNormalTrade(
 	// Calculate slippage
 	slippage := kalshiClient.CalculateSlippage(book, side, kalshi.ActionBuy, contracts)
 	if !slippage.Acceptable {
-		log.Printf("Slippage %.2f%% exceeds max %.2f%% for %s, skipping",
-			slippage.SlippagePct*100, execConfig.MaxSlippagePct*100, ticker)
+		if slippage.FillableContracts == 0 {
+			log.Printf("No liquidity in order book for game %s, skipping", ticker)
+		} else {
+			log.Printf("Slippage %.2f%% exceeds max %.2f%% for %s, skipping",
+				slippage.SlippagePct*100, execConfig.MaxSlippagePct*100, ticker)
+		}
 		return
 	}
 
@@ -679,8 +696,12 @@ func executePlayerPropOpportunity(
 	// Calculate slippage
 	slippage := kalshiClient.CalculateSlippage(book, side, kalshi.ActionBuy, contracts)
 	if !slippage.Acceptable {
-		log.Printf("Slippage %.2f%% exceeds max for prop %s, skipping",
-			slippage.SlippagePct*100, ticker)
+		if slippage.FillableContracts == 0 {
+			log.Printf("No liquidity in order book for prop %s, skipping", ticker)
+		} else {
+			log.Printf("Slippage %.2f%% exceeds max %.2f%% for prop %s, skipping",
+				slippage.SlippagePct*100, execConfig.MaxSlippagePct*100, ticker)
+		}
 		return
 	}
 
