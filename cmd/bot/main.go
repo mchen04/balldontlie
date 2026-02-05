@@ -547,6 +547,27 @@ func executeArbitrage(
 		contracts = min(contracts, maxFromLimit)
 	}
 
+	// Store arb position in database BEFORE placing order (for duplicate prevention)
+	if db != nil {
+		pos := positions.Position{
+			GameID:     fmt.Sprintf("%d", opp.GameID),
+			HomeTeam:   opp.HomeTeam,
+			AwayTeam:   opp.AwayTeam,
+			MarketType: "arb_" + string(opp.MarketType),
+			Side:       "arb",
+			Ticker:     ticker,
+			BetSide:    betSide,
+			EntryPrice: float64(arb.TotalCost) / 100,
+			Contracts:  contracts,
+		}
+		id, err := db.AddPosition(pos)
+		if err != nil {
+			log.Printf("Failed to store arb position: %v", err)
+		} else {
+			log.Printf("Stored arb position ID %d: %s %s", id, ticker, betSide)
+		}
+	}
+
 	if execConfig.DryRun {
 		profit := kalshi.CalculateArbProfit(arb.YesPrice, arb.NoPrice, contracts, cfg.KalshiFee)
 		log.Printf("DRY RUN ARB: Would buy %d contracts YES@%d¢ + NO@%d¢. Guaranteed profit: $%.2f",
@@ -587,24 +608,6 @@ func executeArbitrage(
 			cfg.KalshiFee,
 		)
 		log.Printf("ARB COMPLETE: %d matched contracts. Guaranteed profit: $%.2f", matchedContracts, profit/100)
-
-		// Track arb position in database
-		if db != nil {
-			pos := positions.Position{
-				GameID:     fmt.Sprintf("%d", opp.GameID),
-				HomeTeam:   opp.HomeTeam,
-				AwayTeam:   opp.AwayTeam,
-				MarketType: "arb_" + string(opp.MarketType),
-				Side:       "arb",
-				Ticker:     ticker,
-				BetSide:    betSide,
-				EntryPrice: float64(arb.TotalCost) / 100,
-				Contracts:  matchedContracts,
-			}
-			if _, err := db.AddPosition(pos); err != nil {
-				log.Printf("Failed to track arb position: %v", err)
-			}
-		}
 	}
 
 	return totalSpent
@@ -673,6 +676,27 @@ func executeNormalTrade(
 	log.Printf("Executing: %s %s %d contracts @ %.0f¢ (EV: %.2f%%, Kelly: %.1f%%)",
 		ticker, side, contracts, slippage.AverageFillPrice, adjustedEV*100, opp.KellyStake*100)
 
+	// Store position in database BEFORE placing order (for duplicate prevention in dry-run and live)
+	if db != nil {
+		pos := positions.Position{
+			GameID:     fmt.Sprintf("%d", opp.GameID),
+			HomeTeam:   opp.HomeTeam,
+			AwayTeam:   opp.AwayTeam,
+			MarketType: string(opp.MarketType),
+			Side:       opp.Side,
+			Ticker:     ticker,
+			BetSide:    betSide,
+			EntryPrice: slippage.AverageFillPrice / 100,
+			Contracts:  contracts,
+		}
+		id, err := db.AddPosition(pos)
+		if err != nil {
+			log.Printf("Failed to store position: %v", err)
+		} else {
+			log.Printf("Stored position ID %d: %s %s", id, ticker, betSide)
+		}
+	}
+
 	// Add EV verification to execution config (safety net for price movement during execution)
 	execConfigWithEV := execConfig
 	execConfigWithEV.TrueProb = opp.TrueProb
@@ -690,24 +714,6 @@ func executeNormalTrade(
 		log.Printf("ORDER FILLED: %s %d/%d contracts @ %.0f¢ avg, total cost $%.2f",
 			result.OrderID, result.FilledContracts, result.RequestedContracts,
 			result.AveragePrice, float64(result.TotalCost)/100)
-
-		// Track position in database
-		if db != nil && result.FilledContracts > 0 {
-			pos := positions.Position{
-				GameID:     fmt.Sprintf("%d", opp.GameID),
-				HomeTeam:   opp.HomeTeam,
-				AwayTeam:   opp.AwayTeam,
-				MarketType: string(opp.MarketType),
-				Side:       opp.Side,
-				Ticker:     ticker,
-				BetSide:    betSide,
-				EntryPrice: result.AveragePrice / 100,
-				Contracts:  result.FilledContracts,
-			}
-			if _, err := db.AddPosition(pos); err != nil {
-				log.Printf("Failed to track position: %v", err)
-			}
-		}
 		return float64(result.TotalCost) / 100
 	}
 
@@ -818,6 +824,27 @@ func executePlayerPropOpportunity(
 	log.Printf("Executing prop: %s %s %s %.1f %d contracts @ %.0f¢ (EV: %.2f%%)",
 		opp.PlayerName, opp.Side, opp.PropType, opp.Line, contracts, slippage.AverageFillPrice, adjustedEV*100)
 
+	// Store position in database BEFORE placing order (for duplicate prevention in dry-run and live)
+	if db != nil {
+		pos := positions.Position{
+			GameID:     fmt.Sprintf("%d", opp.GameID),
+			HomeTeam:   opp.HomeTeam,
+			AwayTeam:   opp.AwayTeam,
+			MarketType: fmt.Sprintf("prop_%s", opp.PropType),
+			Side:       fmt.Sprintf("%s_%s_%.1f", opp.PlayerName, opp.Side, opp.Line),
+			Ticker:     ticker,
+			BetSide:    betSide,
+			EntryPrice: slippage.AverageFillPrice / 100,
+			Contracts:  contracts,
+		}
+		id, err := db.AddPosition(pos)
+		if err != nil {
+			log.Printf("Failed to store prop position: %v", err)
+		} else {
+			log.Printf("Stored prop position ID %d: %s %s", id, ticker, betSide)
+		}
+	}
+
 	// Add EV verification to execution config (safety net for price movement during execution)
 	execConfigWithEV := execConfig
 	execConfigWithEV.TrueProb = opp.TrueProb
@@ -835,27 +862,6 @@ func executePlayerPropOpportunity(
 		log.Printf("PROP ORDER FILLED: %s %d/%d contracts @ %.0f¢ avg, total cost $%.2f",
 			result.OrderID, result.FilledContracts, result.RequestedContracts,
 			result.AveragePrice, float64(result.TotalCost)/100)
-
-		// Track position in database (also prevents duplicate bets)
-		if db != nil && result.FilledContracts > 0 {
-			pos := positions.Position{
-				GameID:     fmt.Sprintf("%d", opp.GameID),
-				HomeTeam:   opp.HomeTeam,
-				AwayTeam:   opp.AwayTeam,
-				MarketType: fmt.Sprintf("prop_%s", opp.PropType),
-				Side:       fmt.Sprintf("%s_%s_%.1f", opp.PlayerName, opp.Side, opp.Line),
-				Ticker:     ticker,
-				BetSide:    betSide,
-				EntryPrice: result.AveragePrice / 100,
-				Contracts:  result.FilledContracts,
-			}
-			id, err := db.AddPosition(pos)
-			if err != nil {
-				log.Printf("Failed to track prop position: %v", err)
-			} else {
-				log.Printf("Stored position ID %d: %s %s", id, ticker, betSide)
-			}
-		}
 		return float64(result.TotalCost) / 100
 	}
 
