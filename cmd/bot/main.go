@@ -660,10 +660,10 @@ func executePlayerPropOpportunity(
 	notifier *alerts.Notifier,
 	db *positions.DB,
 ) {
-	// Build player prop ticker
-	ticker := mapToPlayerPropTicker(opp)
+	// Use the full Kalshi ticker from the opportunity
+	ticker := opp.KalshiTicker
 	if ticker == "" {
-		log.Printf("Could not map player prop to Kalshi ticker: %s %s", opp.PlayerName, opp.PropType)
+		log.Printf("No Kalshi ticker for player prop: %s %s", opp.PlayerName, opp.PropType)
 		return
 	}
 

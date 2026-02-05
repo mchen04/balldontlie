@@ -25,6 +25,7 @@ type PlayerPropOpportunity struct {
 	AdjustedEV   float64 // EV after Kalshi fees
 	KellyStake   float64 // Recommended stake fraction
 	BookCount    int     // Number of books in consensus
+	KalshiTicker string  // Full Kalshi market ticker for order execution
 }
 
 // PlayerPropConsensus holds consensus for a single player prop
@@ -276,21 +277,22 @@ func FindPlayerPropOpportunitiesWithKalshi(
 			adjEV := CalculateAdjustedEV(consensus.OverTrueProb, kalshiOverPrice, cfg.KalshiFee)
 			if adjEV >= cfg.EVThreshold {
 				opportunities = append(opportunities, PlayerPropOpportunity{
-					GameID:      gameID,
-					GameDate:    gameDate,
-					HomeTeam:    homeTeam,
-					AwayTeam:    awayTeam,
-					PlayerID:    key.PlayerID,
-					PlayerName:  playerName,
-					PropType:    key.PropType,
-					Line:        matchedKalshi.Line,
-					Side:        "over",
-					TrueProb:    consensus.OverTrueProb,
-					KalshiPrice: kalshiOverPrice,
-					RawEV:       CalculateEV(consensus.OverTrueProb, kalshiOverPrice),
-					AdjustedEV:  adjEV,
-					KellyStake:  CalculateKelly(consensus.OverTrueProb, kalshiOverPrice, cfg.KellyFraction),
-					BookCount:   consensus.BookCount,
+					GameID:       gameID,
+					GameDate:     gameDate,
+					HomeTeam:     homeTeam,
+					AwayTeam:     awayTeam,
+					PlayerID:     key.PlayerID,
+					PlayerName:   playerName,
+					PropType:     key.PropType,
+					Line:         matchedKalshi.Line,
+					Side:         "over",
+					TrueProb:     consensus.OverTrueProb,
+					KalshiPrice:  kalshiOverPrice,
+					RawEV:        CalculateEV(consensus.OverTrueProb, kalshiOverPrice),
+					AdjustedEV:   adjEV,
+					KellyStake:   CalculateKelly(consensus.OverTrueProb, kalshiOverPrice, cfg.KellyFraction),
+					BookCount:    consensus.BookCount,
+					KalshiTicker: matchedKalshi.Ticker,
 				})
 			}
 		}
@@ -300,21 +302,22 @@ func FindPlayerPropOpportunitiesWithKalshi(
 			adjEV := CalculateAdjustedEV(consensus.UnderTrueProb, kalshiUnderPrice, cfg.KalshiFee)
 			if adjEV >= cfg.EVThreshold {
 				opportunities = append(opportunities, PlayerPropOpportunity{
-					GameID:      gameID,
-					GameDate:    gameDate,
-					HomeTeam:    homeTeam,
-					AwayTeam:    awayTeam,
-					PlayerID:    key.PlayerID,
-					PlayerName:  playerName,
-					PropType:    key.PropType,
-					Line:        matchedKalshi.Line,
-					Side:        "under",
-					TrueProb:    consensus.UnderTrueProb,
-					KalshiPrice: kalshiUnderPrice,
-					RawEV:       CalculateEV(consensus.UnderTrueProb, kalshiUnderPrice),
-					AdjustedEV:  adjEV,
-					KellyStake:  CalculateKelly(consensus.UnderTrueProb, kalshiUnderPrice, cfg.KellyFraction),
-					BookCount:   consensus.BookCount,
+					GameID:       gameID,
+					GameDate:     gameDate,
+					HomeTeam:     homeTeam,
+					AwayTeam:     awayTeam,
+					PlayerID:     key.PlayerID,
+					PlayerName:   playerName,
+					PropType:     key.PropType,
+					Line:         matchedKalshi.Line,
+					Side:         "under",
+					TrueProb:     consensus.UnderTrueProb,
+					KalshiPrice:  kalshiUnderPrice,
+					RawEV:        CalculateEV(consensus.UnderTrueProb, kalshiUnderPrice),
+					AdjustedEV:   adjEV,
+					KellyStake:   CalculateKelly(consensus.UnderTrueProb, kalshiUnderPrice, cfg.KellyFraction),
+					BookCount:    consensus.BookCount,
+					KalshiTicker: matchedKalshi.Ticker,
 				})
 			}
 		}
@@ -445,21 +448,22 @@ func FindPlayerPropOpportunitiesWithInterpolation(
 				adjEV := CalculateAdjustedEV(estimatedOverProb, kalshiOverPrice, cfg.KalshiFee)
 				if adjEV >= cfg.EVThreshold {
 					opportunities = append(opportunities, PlayerPropOpportunity{
-						GameID:      gameID,
-						GameDate:    gameDate,
-						HomeTeam:    homeTeam,
-						AwayTeam:    awayTeam,
-						PlayerID:    ppKey.PlayerID,
-						PlayerName:  playerName,
-						PropType:    ppKey.PropType,
-						Line:        kalshiLine,
-						Side:        "over",
-						TrueProb:    estimatedOverProb,
-						KalshiPrice: kalshiOverPrice,
-						RawEV:       CalculateEV(estimatedOverProb, kalshiOverPrice),
-						AdjustedEV:  adjEV,
-						KellyStake:  CalculateKelly(estimatedOverProb, kalshiOverPrice, cfg.KellyFraction),
-						BookCount:   avgBooks,
+						GameID:       gameID,
+						GameDate:     gameDate,
+						HomeTeam:     homeTeam,
+						AwayTeam:     awayTeam,
+						PlayerID:     ppKey.PlayerID,
+						PlayerName:   playerName,
+						PropType:     ppKey.PropType,
+						Line:         kalshiLine,
+						Side:         "over",
+						TrueProb:     estimatedOverProb,
+						KalshiPrice:  kalshiOverPrice,
+						RawEV:        CalculateEV(estimatedOverProb, kalshiOverPrice),
+						AdjustedEV:   adjEV,
+						KellyStake:   CalculateKelly(estimatedOverProb, kalshiOverPrice, cfg.KellyFraction),
+						BookCount:    avgBooks,
+						KalshiTicker: km.Ticker,
 					})
 				}
 			}
@@ -469,21 +473,22 @@ func FindPlayerPropOpportunitiesWithInterpolation(
 				adjEV := CalculateAdjustedEV(estimatedUnderProb, kalshiUnderPrice, cfg.KalshiFee)
 				if adjEV >= cfg.EVThreshold {
 					opportunities = append(opportunities, PlayerPropOpportunity{
-						GameID:      gameID,
-						GameDate:    gameDate,
-						HomeTeam:    homeTeam,
-						AwayTeam:    awayTeam,
-						PlayerID:    ppKey.PlayerID,
-						PlayerName:  playerName,
-						PropType:    ppKey.PropType,
-						Line:        kalshiLine,
-						Side:        "under",
-						TrueProb:    estimatedUnderProb,
-						KalshiPrice: kalshiUnderPrice,
-						RawEV:       CalculateEV(estimatedUnderProb, kalshiUnderPrice),
-						AdjustedEV:  adjEV,
-						KellyStake:  CalculateKelly(estimatedUnderProb, kalshiUnderPrice, cfg.KellyFraction),
-						BookCount:   avgBooks,
+						GameID:       gameID,
+						GameDate:     gameDate,
+						HomeTeam:     homeTeam,
+						AwayTeam:     awayTeam,
+						PlayerID:     ppKey.PlayerID,
+						PlayerName:   playerName,
+						PropType:     ppKey.PropType,
+						Line:         kalshiLine,
+						Side:         "under",
+						TrueProb:     estimatedUnderProb,
+						KalshiPrice:  kalshiUnderPrice,
+						RawEV:        CalculateEV(estimatedUnderProb, kalshiUnderPrice),
+						AdjustedEV:   adjEV,
+						KellyStake:   CalculateKelly(estimatedUnderProb, kalshiUnderPrice, cfg.KellyFraction),
+						BookCount:    avgBooks,
+						KalshiTicker: km.Ticker,
 					})
 				}
 			}
