@@ -265,9 +265,9 @@ func normalizeSpreadProb(homeCover, awayCover, bookLine, targetLine float64) (fl
 	adjustedHome := mathutil.NormalCDF(targetZ)
 	adjustedAway := 1.0 - adjustedHome
 
-	// Clamp to valid range
+	// Clamp to valid range, then derive away to preserve sum-to-1
 	adjustedHome = math.Max(0.01, math.Min(0.99, adjustedHome))
-	adjustedAway = math.Max(0.01, math.Min(0.99, adjustedAway))
+	adjustedAway = 1.0 - adjustedHome
 
 	return adjustedHome, adjustedAway
 }
@@ -293,9 +293,9 @@ func normalizeTotalProb(overProb, underProb, bookLine, targetLine float64) (floa
 	adjustedOver := mathutil.NormalCDF(targetZ)
 	adjustedUnder := 1.0 - adjustedOver
 
-	// Clamp to valid range
+	// Clamp to valid range, then derive under to preserve sum-to-1
 	adjustedOver = math.Max(0.01, math.Min(0.99, adjustedOver))
-	adjustedUnder = math.Max(0.01, math.Min(0.99, adjustedUnder))
+	adjustedUnder = 1.0 - adjustedOver
 
 	return adjustedOver, adjustedUnder
 }
