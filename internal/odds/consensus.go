@@ -2,6 +2,7 @@ package odds
 
 import (
 	"math"
+	"time"
 
 	"sports-betting-bot/internal/api"
 	"sports-betting-bot/internal/mathutil"
@@ -87,10 +88,31 @@ func vendorWeight(name string) float64 {
 	return softWeight
 }
 
+// isVendorFresh checks if a vendor's odds are within the staleness threshold.
+// Returns true if maxAgeSec is 0 (no filtering) or if the vendor's UpdatedAt
+// is within maxAgeSec of now.
+func isVendorFresh(vendor api.Vendor, maxAgeSec int) bool {
+	if maxAgeSec <= 0 || vendor.UpdatedAt == "" {
+		return true // No filtering or no timestamp
+	}
+	t, err := time.Parse(time.RFC3339, vendor.UpdatedAt)
+	if err != nil {
+		t, err = time.Parse("2006-01-02T15:04:05Z", vendor.UpdatedAt)
+		if err != nil {
+			return true // Can't parse, assume fresh
+		}
+	}
+	return time.Since(t) <= time.Duration(maxAgeSec)*time.Second
+}
+
 // CalculateConsensus computes consensus true probabilities from multiple vendors
 // Normalizes spread/total probabilities to match Kalshi's line
 // Sharp books (Pinnacle, Circa, etc.) are weighted 2x vs soft books
-func CalculateConsensus(gameOdds api.GameOdds) ConsensusOdds {
+func CalculateConsensus(gameOdds api.GameOdds, maxOddsAgeSec ...int) ConsensusOdds {
+	maxAge := 0
+	if len(maxOddsAgeSec) > 0 {
+		maxAge = maxOddsAgeSec[0]
+	}
 	consensus := ConsensusOdds{
 		GameID:   gameOdds.GameID,
 		GameDate: gameOdds.Game.Date,
@@ -128,6 +150,11 @@ func CalculateConsensus(gameOdds api.GameOdds) ConsensusOdds {
 	// Second pass: collect and normalize probabilities
 	for _, vendor := range gameOdds.Vendors {
 		if api.IsKalshi(vendor.Name) {
+			continue
+		}
+
+		// Skip stale vendor odds
+		if !isVendorFresh(vendor, maxAge) {
 			continue
 		}
 

@@ -25,6 +25,10 @@ const (
 	DefaultPreGameSkipWindow      = 1 * time.Minute
 	DefaultMinArbProfitCents      = 0.5
 	DefaultMinArbProfitPct        = 0.005
+	DefaultMaxOddsAgeSec          = 1800 // 30 minutes
+	DefaultMaxGameExposurePct     = 0.10 // 10% bankroll per game
+	DefaultTakerFeeCoeff          = 0.07
+	DefaultTakerFeeCap            = 0.0175
 )
 
 // Config holds all application configuration.
@@ -47,6 +51,10 @@ type Config struct {
 	MaxSlippagePct        float64
 	MinLiquidityContracts int
 	MaxBetDollars         float64
+	MaxOddsAgeSec         int     // Max age of vendor odds to include in consensus (0 = no filter)
+	MaxGameExposurePct    float64 // Max Kelly exposure per game (correlated bet protection)
+	TakerFeeCoeff         float64 // Kalshi taker fee coefficient (default 0.07)
+	TakerFeeCap           float64 // Kalshi taker fee cap in dollars (default 0.0175)
 }
 
 // Load reads configuration from environment variables (and .env file if present).
@@ -72,6 +80,10 @@ func Load() Config {
 		MaxSlippagePct:        DefaultMaxSlippagePct,
 		MinLiquidityContracts: DefaultMinLiquidity,
 		MaxBetDollars:         0, // 0 = no cap
+		MaxOddsAgeSec:         DefaultMaxOddsAgeSec,
+		MaxGameExposurePct:    DefaultMaxGameExposurePct,
+		TakerFeeCoeff:         DefaultTakerFeeCoeff,
+		TakerFeeCap:           DefaultTakerFeeCap,
 	}
 
 	if v := os.Getenv("EV_THRESHOLD"); v != "" {
@@ -120,6 +132,30 @@ func Load() Config {
 	if v := os.Getenv("MAX_BET_DOLLARS"); v != "" {
 		if f, err := strconv.ParseFloat(v, 64); err == nil {
 			cfg.MaxBetDollars = f
+		}
+	}
+
+	if v := os.Getenv("MAX_ODDS_AGE_SEC"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.MaxOddsAgeSec = n
+		}
+	}
+
+	if v := os.Getenv("MAX_GAME_EXPOSURE_PCT"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			cfg.MaxGameExposurePct = f
+		}
+	}
+
+	if v := os.Getenv("TAKER_FEE_COEFF"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			cfg.TakerFeeCoeff = f
+		}
+	}
+
+	if v := os.Getenv("TAKER_FEE_CAP"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			cfg.TakerFeeCap = f
 		}
 	}
 

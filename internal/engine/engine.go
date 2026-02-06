@@ -139,7 +139,7 @@ func (e *Engine) Scan() {
 			continue
 		}
 
-		consensus := odds.CalculateConsensus(game)
+		consensus := odds.CalculateConsensus(game, e.cfg.MaxOddsAgeSec)
 
 		opportunities := analysis.FindAllOpportunities(consensus, e.analysisCfg)
 		allGameOpps = append(allGameOpps, opportunities...)
@@ -187,19 +187,51 @@ func (e *Engine) Scan() {
 		return allPropOpps[i].AdjustedEV > allPropOpps[j].AdjustedEV
 	})
 
+	// Track cumulative Kelly exposure per game for correlated bet protection
+	gameExposure := make(map[int]float64)
+
 	for _, opp := range allGameOpps {
 		e.notifier.AlertOpportunity(opp)
 		if kalshiAvailable && bankroll > 0 {
+			// Check per-game exposure cap
+			if e.cfg.MaxGameExposurePct > 0 {
+				current := gameExposure[opp.GameID]
+				if current+opp.KellyStake > e.cfg.MaxGameExposurePct {
+					remaining := e.cfg.MaxGameExposurePct - current
+					if remaining <= 0 {
+						continue
+					}
+					// Scale down Kelly stake to fit within cap
+					opp.KellyStake = remaining
+				}
+			}
 			spent := ExecuteOpportunity(e.kalshiClient, opp, bankroll, e.execConfig, e.cfg, e.db)
-			bankroll -= spent
+			if spent > 0 {
+				bankroll -= spent
+				gameExposure[opp.GameID] += opp.KellyStake
+			}
 		}
 	}
 
 	for _, propOpp := range allPropOpps {
 		e.notifier.AlertPlayerProp(propOpp)
 		if kalshiAvailable && bankroll > 0 {
+			// Check per-game exposure cap
+			if e.cfg.MaxGameExposurePct > 0 {
+				current := gameExposure[propOpp.GameID]
+				if current+propOpp.KellyStake > e.cfg.MaxGameExposurePct {
+					remaining := e.cfg.MaxGameExposurePct - current
+					if remaining <= 0 {
+						continue
+					}
+					propOpp.KellyStake = remaining
+				}
+			}
 			spent := ExecutePropOpportunity(e.kalshiClient, propOpp, bankroll, e.execConfig, e.cfg, e.db)
-			bankroll -= spent
+			if spent > 0 {
+				bankroll -= spent
+				gameExposure[propOpp.GameID] += propOpp.KellyStake
+			}
 		}
 	}
 

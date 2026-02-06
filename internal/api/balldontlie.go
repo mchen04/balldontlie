@@ -126,6 +126,7 @@ type Vendor struct {
 	Moneyline *Moneyline `json:"moneyline,omitempty"`
 	Spread    *Spread    `json:"spread,omitempty"`
 	Total     *Total     `json:"total,omitempty"`
+	UpdatedAt string     `json:"updated_at,omitempty"`
 }
 
 // Moneyline odds
@@ -284,7 +285,8 @@ func groupOddsByGame(records []OddsRecordV2, games map[int]GameInfo) []GameOdds 
 
 		// Convert flat record to Vendor struct
 		vendor := Vendor{
-			Name: rec.Vendor,
+			Name:      rec.Vendor,
+			UpdatedAt: rec.UpdatedAt,
 		}
 
 		// Parse moneyline (if available)

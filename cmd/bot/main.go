@@ -29,6 +29,9 @@ func main() {
 		log.Fatal("BALLDONTLIE_API_KEY is required")
 	}
 
+	// Configure fee parameters (before any fee calculations)
+	kalshi.ConfigureFees(cfg.TakerFeeCoeff, cfg.TakerFeeCap)
+
 	// Initialize components
 	client := api.NewBallDontLieClient(cfg.APIKey)
 	notifier := alerts.NewNotifier(config.DefaultAlertCooldown)

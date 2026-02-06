@@ -499,6 +499,7 @@ func FindPlayerPropOpportunitiesWithInterpolation(
 }
 
 // calculateBDLConsensus calculates consensus from Ball Don't Lie props only (no Kalshi)
+// Applies sharp book weighting (2x for Pinnacle, Circa, etc.) mirroring game consensus
 func calculateBDLConsensus(props []api.PlayerProp) *PlayerPropConsensus {
 	if len(props) == 0 {
 		return nil
@@ -506,7 +507,10 @@ func calculateBDLConsensus(props []api.PlayerProp) *PlayerPropConsensus {
 
 	first := props[0]
 
-	var overProbs, underProbs []float64
+	type weightedProb struct {
+		over, under, weight float64
+	}
+	var probs []weightedProb
 
 	for _, prop := range props {
 		// Skip non over/under markets
@@ -527,19 +531,23 @@ func calculateBDLConsensus(props []api.PlayerProp) *PlayerPropConsensus {
 		// Remove vig using Power method (accounts for FLB bias)
 		overProb, underProb := odds.RemoveVigPowerFromAmerican(prop.Market.OverOdds, prop.Market.UnderOdds)
 		if overProb > 0 && underProb > 0 {
-			overProbs = append(overProbs, overProb)
-			underProbs = append(underProbs, underProb)
+			w := 1.0
+			if api.IsSharpBook(prop.Vendor) {
+				w = 2.0
+			}
+			probs = append(probs, weightedProb{overProb, underProb, w})
 		}
 	}
 
-	if len(overProbs) == 0 {
+	if len(probs) == 0 {
 		return nil
 	}
 
-	var overSum, underSum float64
-	for i := range overProbs {
-		overSum += overProbs[i]
-		underSum += underProbs[i]
+	var overSum, underSum, wSum float64
+	for _, p := range probs {
+		overSum += p.over * p.weight
+		underSum += p.under * p.weight
+		wSum += p.weight
 	}
 
 	return &PlayerPropConsensus{
@@ -547,8 +555,8 @@ func calculateBDLConsensus(props []api.PlayerProp) *PlayerPropConsensus {
 		PlayerName:    fmt.Sprintf("Player_%d", first.PlayerID),
 		PropType:      first.PropType,
 		Line:          first.Line(),
-		OverTrueProb:  overSum / float64(len(overProbs)),
-		UnderTrueProb: underSum / float64(len(underProbs)),
-		BookCount:     len(overProbs),
+		OverTrueProb:  overSum / wSum,
+		UnderTrueProb: underSum / wSum,
+		BookCount:     len(probs),
 	}
 }

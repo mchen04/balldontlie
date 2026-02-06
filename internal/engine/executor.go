@@ -3,12 +3,51 @@ package engine
 import (
 	"fmt"
 	"log/slog"
+	"sync"
+	"time"
 
 	"sports-betting-bot/internal/analysis"
 	"sports-betting-bot/internal/config"
 	"sports-betting-bot/internal/kalshi"
 	"sports-betting-bot/internal/positions"
 )
+
+// recentAttempts tracks recently-attempted ticker+side combos to prevent
+// race conditions between poll cycles while the order is in-flight.
+var (
+	recentAttempts   = make(map[string]time.Time)
+	recentAttemptsMu sync.Mutex
+	attemptTTL       = 30 * time.Second
+)
+
+// isRecentlyAttempted checks if a ticker+side was recently attempted.
+func isRecentlyAttempted(ticker, side string) bool {
+	recentAttemptsMu.Lock()
+	defer recentAttemptsMu.Unlock()
+
+	key := ticker + ":" + side
+	if t, ok := recentAttempts[key]; ok {
+		if time.Since(t) < attemptTTL {
+			return true
+		}
+		delete(recentAttempts, key)
+	}
+	return false
+}
+
+// markAttempted marks a ticker+side as recently attempted.
+func markAttempted(ticker, side string) {
+	recentAttemptsMu.Lock()
+	defer recentAttemptsMu.Unlock()
+	recentAttempts[ticker+":"+side] = time.Now()
+}
+
+// clearAttempt removes the in-flight lock after order resolution.
+func clearAttempt(ticker, side string) {
+	recentAttemptsMu.Lock()
+	defer recentAttemptsMu.Unlock()
+	delete(recentAttempts, ticker+":"+side)
+}
 
 // TradeParams captures the common fields needed for trade execution,
 // regardless of whether the opportunity is a game market or player prop.
@@ -95,6 +134,11 @@ func ExecuteOpportunity(
 		return 0
 	}
 
+	// Check in-flight lock (prevents race between poll cycles)
+	if isRecentlyAttempted(tp.Ticker, tp.BetSide) {
+		return 0
+	}
+
 	// Check database for existing position
 	if db != nil {
 		hasPosition, err := db.HasPositionOnTicker(tp.Ticker, tp.BetSide)
@@ -142,6 +186,11 @@ func ExecutePropOpportunity(
 	tp := TradeParamsFromPropOpportunity(opp)
 	if tp.Ticker == "" {
 		slog.Error("No ticker for prop", "player", opp.PlayerName, "propType", opp.PropType)
+		return 0
+	}
+
+	// Check in-flight lock (prevents race between poll cycles)
+	if isRecentlyAttempted(tp.Ticker, tp.BetSide) {
 		return 0
 	}
 
@@ -236,26 +285,8 @@ func ExecuteTrade(
 		"contracts", contracts, "price", slippage.AverageFillPrice,
 		"ev", adjustedEV*100, "kelly", tp.KellyStake*100)
 
-	// Store position in database BEFORE placing order (for duplicate prevention)
-	if db != nil {
-		pos := positions.Position{
-			GameID:     fmt.Sprintf("%d", tp.GameID),
-			HomeTeam:   tp.HomeTeam,
-			AwayTeam:   tp.AwayTeam,
-			MarketType: tp.MarketType,
-			Side:       tp.PositionSide,
-			Ticker:     tp.Ticker,
-			BetSide:    tp.BetSide,
-			EntryPrice: slippage.AverageFillPrice / 100,
-			Contracts:  contracts,
-		}
-		id, err := db.AddPosition(pos)
-		if err != nil {
-			slog.Error("Storing position failed", "err", err)
-		} else {
-			slog.Info("Stored position", "id", id, "ticker", tp.Ticker, "side", tp.BetSide)
-		}
-	}
+	// Mark as in-flight to prevent duplicate attempts from concurrent poll cycles
+	markAttempted(tp.Ticker, tp.BetSide)
 
 	// Add EV verification to execution config
 	execConfigWithEV := execConfig
@@ -265,6 +296,7 @@ func ExecuteTrade(
 	result, err := kalshiClient.PlaceOrder(tp.Ticker, tp.Side, kalshi.ActionBuy, contracts, execConfigWithEV)
 	if err != nil {
 		slog.Error("Order failed", "ticker", tp.Ticker, "err", err)
+		clearAttempt(tp.Ticker, tp.BetSide)
 		return 0
 	}
 
@@ -273,11 +305,34 @@ func ExecuteTrade(
 			"type", tp.LogPrefix, "orderID", result.OrderID,
 			"filled", result.FilledContracts, "requested", result.RequestedContracts,
 			"avgPrice", result.AveragePrice, "cost", float64(result.TotalCost)/100)
+
+		// Store position AFTER successful fill (prevents stale DB entries from failed orders)
+		if db != nil {
+			pos := positions.Position{
+				GameID:     fmt.Sprintf("%d", tp.GameID),
+				HomeTeam:   tp.HomeTeam,
+				AwayTeam:   tp.AwayTeam,
+				MarketType: tp.MarketType,
+				Side:       tp.PositionSide,
+				Ticker:     tp.Ticker,
+				BetSide:    tp.BetSide,
+				EntryPrice: result.AveragePrice / 100,
+				Contracts:  result.FilledContracts,
+			}
+			id, dbErr := db.AddPosition(pos)
+			if dbErr != nil {
+				slog.Error("Storing position failed", "err", dbErr)
+			} else {
+				slog.Info("Stored position", "id", id, "ticker", tp.Ticker, "side", tp.BetSide)
+			}
+		}
+
 		return float64(result.TotalCost) / 100
 	}
 
 	slog.Warn("Order rejected",
 		"type", tp.LogPrefix, "ticker", tp.Ticker, "reason", result.RejectionReason)
+	clearAttempt(tp.Ticker, tp.BetSide)
 	return 0
 }
 
@@ -306,27 +361,6 @@ func ExecuteArbitrage(
 		contracts = min(contracts, maxFromLimit)
 	}
 
-	// Store arb position in database BEFORE placing order
-	if db != nil {
-		pos := positions.Position{
-			GameID:     fmt.Sprintf("%d", tp.GameID),
-			HomeTeam:   tp.HomeTeam,
-			AwayTeam:   tp.AwayTeam,
-			MarketType: "arb_" + tp.MarketType,
-			Side:       "arb",
-			Ticker:     tp.Ticker,
-			BetSide:    tp.BetSide,
-			EntryPrice: float64(arb.TotalCost) / 100,
-			Contracts:  contracts,
-		}
-		id, err := db.AddPosition(pos)
-		if err != nil {
-			slog.Error("Storing arb position failed", "err", err)
-		} else {
-			slog.Info("Stored arb position", "id", id, "ticker", tp.Ticker, "side", tp.BetSide)
-		}
-	}
-
 	if execConfig.DryRun {
 		profit := kalshi.CalculateArbProfit(arb.YesPrice, arb.NoPrice, contracts)
 		slog.Info("Dry run arb",
@@ -334,6 +368,9 @@ func ExecuteArbitrage(
 			"profit", profit/100)
 		return 0
 	}
+
+	// Mark as in-flight
+	markAttempted(tp.Ticker, tp.BetSide)
 
 	slog.Info("Executing arb",
 		"ticker", arb.Ticker, "contracts", contracts,
@@ -344,6 +381,7 @@ func ExecuteArbitrage(
 		// With concurrent execution, one leg may have filled even on error
 		slog.Error("Arb execution error", "err", err)
 		if yesResult == nil && noResult == nil {
+			clearAttempt(tp.Ticker, tp.BetSide)
 			return 0
 		}
 		slog.Warn("Partial arb fill",
@@ -369,6 +407,27 @@ func ExecuteArbitrage(
 		slog.Info("Arb filled",
 			"matched", matchedContracts, "yesAvg", yesResult.AveragePrice,
 			"noAvg", noResult.AveragePrice, "profit", profit/100)
+	}
+
+	// Store arb position AFTER successful fill
+	if totalSpent > 0 && db != nil {
+		pos := positions.Position{
+			GameID:     fmt.Sprintf("%d", tp.GameID),
+			HomeTeam:   tp.HomeTeam,
+			AwayTeam:   tp.AwayTeam,
+			MarketType: "arb_" + tp.MarketType,
+			Side:       "arb",
+			Ticker:     tp.Ticker,
+			BetSide:    tp.BetSide,
+			EntryPrice: totalSpent,
+			Contracts:  contracts,
+		}
+		id, dbErr := db.AddPosition(pos)
+		if dbErr != nil {
+			slog.Error("Storing arb position failed", "err", dbErr)
+		} else {
+			slog.Info("Stored arb position", "id", id, "ticker", tp.Ticker, "side", tp.BetSide)
+		}
 	}
 
 	return totalSpent

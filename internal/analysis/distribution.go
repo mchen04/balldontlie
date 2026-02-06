@@ -14,11 +14,8 @@ func logFactorial(n int) float64 {
 	if n <= 1 {
 		return 0
 	}
-	result := 0.0
-	for i := 2; i <= n; i++ {
-		result += math.Log(float64(i))
-	}
-	return result
+	r, _ := math.Lgamma(float64(n + 1))
+	return r
 }
 
 // NegBinPMF calculates P(X = k) for Negative Binomial distribution
@@ -188,40 +185,41 @@ func EstimateProbabilityAtLine(bdlLine float64, bdlProb float64, kalshiLine floa
 	bdlThreshold := int(bdlLine) + 1
 
 	if propType == "points" {
-		// Normal distribution for points
-		// First estimate SD, then infer mean
-		// Use BDL line as initial estimate for mean to get SD
-		estimatedSD := DefaultStdDev(propType, bdlLine)
-
-		// Continuity correction for input: BDL "over 23.5" = P(X > 23.5)
-		// For discrete outcomes, this means P(X >= 24)
-		mean := InferNormalMean(float64(bdlThreshold)-0.5, bdlProb, estimatedSD)
-		if mean <= 0 {
+		// Normal distribution for points — two-pass SD estimation
+		// Pass 1: use BDL line as proxy for mean
+		sd1 := DefaultStdDev(propType, bdlLine)
+		mean1 := InferNormalMean(float64(bdlThreshold)-0.5, bdlProb, sd1)
+		if mean1 <= 0 {
 			return 0
 		}
 
-		// NormalCDFOver already applies continuity correction internally:
-		// NormalCDFOver(k, μ, σ) = 1 - Φ((k - 0.5 - μ) / σ)
-		// So pass kalshiLine directly — no external adjustment needed.
-		return NormalCDFOver(kalshiLine, mean, estimatedSD)
+		// Pass 2: refine SD using inferred mean (corrects bias at extreme probs)
+		sd2 := DefaultStdDev(propType, mean1)
+		mean2 := InferNormalMean(float64(bdlThreshold)-0.5, bdlProb, sd2)
+		if mean2 <= 0 {
+			return 0
+		}
+
+		return NormalCDFOver(kalshiLine, mean2, sd2)
 	}
 
 	// Negative Binomial for count props (handles overdispersion)
-	// First get initial mean estimate from BDL line
-	initialMean := bdlLine
-	r := DefaultDispersion(propType, initialMean)
-
-	// Infer mean from BDL market
-	mu := InferNegBinMean(bdlThreshold, bdlProb, r)
-	if mu <= 0 {
+	// Two-pass estimation for dispersion parameter
+	// Pass 1: initial estimate using BDL line as proxy
+	r1 := DefaultDispersion(propType, bdlLine)
+	mu1 := InferNegBinMean(bdlThreshold, bdlProb, r1)
+	if mu1 <= 0 {
 		return 0
 	}
 
-	// Recalculate r with inferred mean for consistency
-	r = DefaultDispersion(propType, mu)
+	// Pass 2: refine dispersion with inferred mean, then re-infer mu
+	r2 := DefaultDispersion(propType, mu1)
+	mu2 := InferNegBinMean(bdlThreshold, bdlProb, r2)
+	if mu2 <= 0 {
+		return 0
+	}
 
-	// Calculate probability at Kalshi line
-	return NegBinCDFOver(int(kalshiLine), mu, r)
+	return NegBinCDFOver(int(kalshiLine), mu2, r2)
 }
 
 // EstimateProbabilityFromMultipleLines estimates probability using multiple BDL lines
