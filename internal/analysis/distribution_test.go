@@ -15,14 +15,6 @@ func TestNegBinPMF(t *testing.T) {
 		delta    float64
 	}{
 		{
-			name:     "Low dispersion (high r) should approximate Poisson",
-			k:        5,
-			mu:       5.0,
-			r:        1000, // Very high r → Poisson
-			expected: PoissonPMF(5, 5.0),
-			delta:    0.01,
-		},
-		{
 			name:     "P(X=0) at mean=3, r=10",
 			k:        0,
 			mu:       3.0,
@@ -75,14 +67,6 @@ func TestNegBinCDFOver(t *testing.T) {
 			expected: 1.0,
 			delta:    0.001,
 		},
-		{
-			name:     "High r should match Poisson",
-			k:        5,
-			mu:       5.0,
-			r:        1000, // Very high r → Poisson
-			expected: PoissonCDFOver(5, 5.0),
-			delta:    0.02,
-		},
 	}
 
 	for _, tt := range tests {
@@ -99,19 +83,20 @@ func TestNegBinCDFOver(t *testing.T) {
 func TestNegBinHeavierTailsThanPoisson(t *testing.T) {
 	// Key property: NegBin with same mean should have heavier tails than Poisson
 	// because variance > mean (overdispersion)
+	// Compare NegBin against high-r NegBin (which approximates Poisson)
 	mu := 6.0
-	r := 12.0 // Gives variance = 6 + 36/12 = 6 + 3 = 9 > 6
+	r := 12.0      // Gives variance = 6 + 36/12 = 9 > 6
+	rHigh := 1000.0 // Approximates Poisson (variance ≈ mean)
 
-	// At the mean, CDF should be similar
 	threshold := 10 // A bit above mean
 
-	poissonProb := PoissonCDFOver(threshold, mu)
+	poissonApprox := NegBinCDFOver(threshold, mu, rHigh)
 	negbinProb := NegBinCDFOver(threshold, mu, r)
 
 	// NegBin should have HIGHER probability of extreme values (heavier tails)
-	if negbinProb <= poissonProb {
-		t.Errorf("NegBin should have heavier tails than Poisson: NegBin P(X>=%d)=%.4f, Poisson=%.4f",
-			threshold, negbinProb, poissonProb)
+	if negbinProb <= poissonApprox {
+		t.Errorf("NegBin should have heavier tails than Poisson: NegBin P(X>=%d)=%.4f, Poisson≈%.4f",
+			threshold, negbinProb, poissonApprox)
 	}
 }
 
@@ -139,10 +124,12 @@ func TestDefaultDispersion(t *testing.T) {
 		mean     float64
 		expected float64 // Expected r value
 	}{
-		{"rebounds", 10.0, 33.0},  // 3.3 * 10
-		{"assists", 8.0, 20.0},    // 2.5 * 8
-		{"threes", 4.0, 8.0},      // 2.0 * 4
-		{"unknown", 5.0, 16.5},    // 3.3 * 5 (default)
+		{"rebounds", 10.0, 33.0}, // 3.3 * 10
+		{"assists", 8.0, 20.0},   // 2.5 * 8
+		{"threes", 4.0, 8.0},     // 2.0 * 4
+		{"steals", 3.0, 6.0},     // 2.0 * 3
+		{"blocks", 2.0, 3.0},     // 1.5 * 2
+		{"unknown", 5.0, 16.5},   // 3.3 * 5 (default)
 	}
 
 	for _, tt := range tests {
@@ -162,26 +149,21 @@ func TestDefaultDispersion(t *testing.T) {
 	}
 }
 
-func TestPropDistributionType(t *testing.T) {
-	tests := []struct {
-		propType string
-		expected string
-	}{
-		{"points", "normal"},
-		{"rebounds", "negbin"},
-		{"assists", "negbin"},
-		{"threes", "negbin"},
-		{"unknown", "negbin"}, // Default to negbin for count data
-	}
+func TestDefaultDispersionStealsBlocks(t *testing.T) {
+	// Steals and blocks are low-count, high-variance stats
+	// Their dispersion should be lower than rebounds/assists (more overdispersion)
+	mean := 2.0
 
-	for _, tt := range tests {
-		t.Run(tt.propType, func(t *testing.T) {
-			result := PropDistributionType(tt.propType)
-			if result != tt.expected {
-				t.Errorf("PropDistributionType(%s) = %s, want %s",
-					tt.propType, result, tt.expected)
-			}
-		})
+	stealsR := DefaultDispersion("steals", mean)
+	blocksR := DefaultDispersion("blocks", mean)
+	reboundsR := DefaultDispersion("rebounds", mean)
+
+	// Lower r = more variance relative to mean
+	if stealsR >= reboundsR {
+		t.Errorf("steals r (%.1f) should be < rebounds r (%.1f) for same mean", stealsR, reboundsR)
+	}
+	if blocksR >= stealsR {
+		t.Errorf("blocks r (%.1f) should be < steals r (%.1f) for same mean", blocksR, stealsR)
 	}
 }
 
@@ -201,20 +183,21 @@ func TestEstimateProbabilityAtLineNegBin(t *testing.T) {
 }
 
 func TestNegBinVsPoissonComparison(t *testing.T) {
-	// Compare NegBin and Poisson for rebounds (typical use case)
+	// Compare NegBin with low vs high dispersion for rebounds
 	mu := 8.0
-	r := 26.4 // 3.3 * 8
+	r := 26.4      // 3.3 * 8 (typical overdispersion)
+	rHigh := 1000.0 // Approximates Poisson
 
 	t.Logf("Comparison for rebounds with mean=%.1f:", mu)
 	t.Logf("NegBin r=%.1f (variance=%.2f)", r, mu+mu*mu/r)
-	t.Logf("Poisson (variance=%.2f)", mu)
+	t.Logf("NegBin r=%.1f ≈ Poisson (variance≈%.2f)", rHigh, mu)
 
 	for threshold := 6; threshold <= 14; threshold += 2 {
-		poisson := PoissonCDFOver(threshold, mu)
+		poissonApprox := NegBinCDFOver(threshold, mu, rHigh)
 		negbin := NegBinCDFOver(threshold, mu, r)
-		diff := (negbin - poisson) * 100
+		diff := (negbin - poissonApprox) * 100
 
-		t.Logf("P(X >= %d): Poisson=%.2f%%, NegBin=%.2f%%, diff=%+.2f%%",
-			threshold, poisson*100, negbin*100, diff)
+		t.Logf("P(X >= %d): Poisson≈%.2f%%, NegBin=%.2f%%, diff=%+.2f%%",
+			threshold, poissonApprox*100, negbin*100, diff)
 	}
 }

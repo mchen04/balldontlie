@@ -38,25 +38,9 @@ type MarketPosition struct {
 	LastUpdatedTs        string `json:"last_updated_ts"`        // ISO datetime
 }
 
-// EventPosition represents positions aggregated by event
-type EventPosition struct {
-	EventTicker          string `json:"event_ticker"`
-	TotalCost            int    `json:"total_cost"`
-	TotalCostDollars     string `json:"total_cost_dollars"`
-	TotalCostShares      int64  `json:"total_cost_shares"`
-	TotalCostSharesFp    string `json:"total_cost_shares_fp"`
-	EventExposure        int    `json:"event_exposure"`
-	EventExposureDollars string `json:"event_exposure_dollars"`
-	RealizedPnl          int    `json:"realized_pnl"`
-	RealizedPnlDollars   string `json:"realized_pnl_dollars"`
-	FeesPaid             int    `json:"fees_paid"`
-	FeesPaidDollars      string `json:"fees_paid_dollars"`
-}
-
 // PositionsResponse from GET /portfolio/positions
 type PositionsResponse struct {
 	MarketPositions []MarketPosition `json:"market_positions"`
-	EventPositions  []EventPosition  `json:"event_positions"`
 	Cursor          string           `json:"cursor"`
 }
 

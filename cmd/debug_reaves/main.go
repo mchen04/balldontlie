@@ -10,6 +10,7 @@ import (
 
 	"github.com/joho/godotenv"
 	"sports-betting-bot/internal/api"
+	"sports-betting-bot/internal/mathutil"
 )
 
 func americanToImplied(odds int) float64 {
@@ -248,7 +249,7 @@ func main() {
 		// P(X >= t) = bdlProb  →  Φ((t-0.5-μ)/σ) = 1 - bdlProb
 		// z = InverseNormalCDF(1 - bdlProb)
 		// μ = (t - 0.5) - σ*z
-		z := inverseNormalCDF(1 - bdlProb)
+		z := mathutil.NormalInvCDF(1 - bdlProb)
 		mean := (float64(bdlThreshold) - 0.5) - estimatedSD*z
 		fmt.Printf("  3. Infer mean: z = Φ⁻¹(%.4f) = %.4f\n", 1-bdlProb, z)
 		fmt.Printf("     μ = (%.1f - 0.5) - %.2f × %.4f = %.2f points\n",
@@ -257,10 +258,10 @@ func main() {
 		// Step 3: Calculate P(X >= kalshiLine) using inferred mean
 		// P(X >= 10) with continuity correction = P(X > 9.5)
 		zScore := (kalshiLine - 0.5 - mean) / estimatedSD
-		probOver := 1 - normalCDF(zScore)
+		probOver := 1 - mathutil.NormalCDF(zScore)
 		fmt.Printf("  4. P(X >= %.0f) = P(X > %.1f) = 1 - Φ((%.1f - %.2f)/%.2f)\n",
 			kalshiLine, kalshiLine-0.5, kalshiLine-0.5, mean, estimatedSD)
-		fmt.Printf("     = 1 - Φ(%.4f) = 1 - %.4f = %.2f%%\n", zScore, normalCDF(zScore), probOver*100)
+		fmt.Printf("     = 1 - Φ(%.4f) = 1 - %.4f = %.2f%%\n", zScore, mathutil.NormalCDF(zScore), probOver*100)
 		fmt.Println()
 	}
 
@@ -274,10 +275,10 @@ func main() {
 		bdlProb := p.OverProb
 		estimatedSD := bdlLine * 0.35
 		bdlThreshold := int(bdlLine) + 1
-		z := inverseNormalCDF(1 - bdlProb)
+		z := mathutil.NormalInvCDF(1 - bdlProb)
 		mean := (float64(bdlThreshold) - 0.5) - estimatedSD*z
 		zScore := (kalshiLine - 0.5 - mean) / estimatedSD
-		probOver := 1 - normalCDF(zScore)
+		probOver := 1 - mathutil.NormalCDF(zScore)
 		shiftedProbs = append(shiftedProbs, probOver)
 	}
 
@@ -294,22 +295,4 @@ func main() {
 	}
 }
 
-// Helper functions for the calculation demonstration
-func normalCDF(z float64) float64 {
-	return 0.5 * (1 + math.Erf(z/math.Sqrt(2)))
-}
-
-func inverseNormalCDF(p float64) float64 {
-	if p <= 0 || p >= 1 {
-		return 0
-	}
-	if p > 0.5 {
-		return -inverseNormalCDF(1 - p)
-	}
-	t := math.Sqrt(-2 * math.Log(p))
-	c0, c1, c2 := 2.515517, 0.802853, 0.010328
-	d1, d2, d3 := 1.432788, 0.189269, 0.001308
-	absZ := t - (c0+c1*t+c2*t*t)/(1+d1*t+d2*t*t+d3*t*t*t)
-	return -absZ
-}
 

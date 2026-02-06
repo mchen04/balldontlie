@@ -81,48 +81,6 @@ func TestNormalizeSpreadProb(t *testing.T) {
 	}
 }
 
-func TestNormalCDF(t *testing.T) {
-	tests := []struct {
-		z        float64
-		expected float64
-		delta    float64
-	}{
-		{0, 0.5, 0.001},
-		{1, 0.8413, 0.001},
-		{-1, 0.1587, 0.001},
-		{2, 0.9772, 0.001},
-		{-2, 0.0228, 0.001},
-	}
-
-	for _, tt := range tests {
-		result := normalCDF(tt.z)
-		if math.Abs(result-tt.expected) > tt.delta {
-			t.Errorf("normalCDF(%.1f) = %.4f, want %.4f", tt.z, result, tt.expected)
-		}
-	}
-}
-
-func TestNormalInvCDF(t *testing.T) {
-	tests := []struct {
-		p        float64
-		expected float64
-		delta    float64
-	}{
-		{0.5, 0, 0.001},
-		{0.8413, 1.0, 0.01},
-		{0.1587, -1.0, 0.01},
-		{0.9772, 2.0, 0.01},
-		{0.0228, -2.0, 0.01},
-	}
-
-	for _, tt := range tests {
-		result := normalInvCDF(tt.p)
-		if math.Abs(result-tt.expected) > tt.delta {
-			t.Errorf("normalInvCDF(%.4f) = %.4f, want %.4f", tt.p, result, tt.expected)
-		}
-	}
-}
-
 func TestNormalizeTotalProb(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -224,8 +182,8 @@ func TestConsensusWithDifferentLines(t *testing.T) {
 	}
 }
 
-func TestConsensusEqualWeighting(t *testing.T) {
-	// All books weighted equally — consensus should be simple average
+func TestConsensusSharpWeighting(t *testing.T) {
+	// Sharp books (Pinnacle) should have more influence than soft books
 	game := api.GameOdds{
 		GameID: 100,
 		Game: api.Game{
@@ -234,11 +192,11 @@ func TestConsensusEqualWeighting(t *testing.T) {
 		},
 		Vendors: []api.Vendor{
 			{
-				Name:      "Pinnacle",
+				Name:      "Pinnacle", // Sharp book — weight 2.0
 				Moneyline: &api.Moneyline{Home: -200, Away: 170},
 			},
 			{
-				Name:      "SoftBook",
+				Name:      "SoftBook", // Soft book — weight 1.0
 				Moneyline: &api.Moneyline{Home: -120, Away: 100},
 			},
 			{
@@ -253,15 +211,23 @@ func TestConsensusEqualWeighting(t *testing.T) {
 		t.Fatal("Expected moneyline consensus")
 	}
 
-	// Pinnacle home prob is ~65%, SoftBook home prob is ~54% (after power vig removal)
-	// Consensus should be simple average ≈ 59.5%
+	// Pinnacle (sharp, weight=2) home prob is ~65%, SoftBook (soft, weight=1) home prob is ~54%
+	// Weighted avg = (65*2 + 54*1) / (2+1) ≈ 61.3% (closer to Pinnacle than simple avg 59.5%)
 	pinnacleHome, _ := RemoveVigPowerFromAmerican(-200, 170)
 	softBookHome, _ := RemoveVigPowerFromAmerican(-120, 100)
-	expectedAvg := (pinnacleHome + softBookHome) / 2
 
-	if math.Abs(consensus.Moneyline.HomeTrueProb-expectedAvg) > 0.001 {
-		t.Errorf("Expected consensus %.4f to equal simple avg %.4f",
-			consensus.Moneyline.HomeTrueProb, expectedAvg)
+	simpleAvg := (pinnacleHome + softBookHome) / 2
+	weightedAvg := (pinnacleHome*2 + softBookHome*1) / 3
+
+	// Consensus should be closer to Pinnacle (weighted) not simple average
+	if math.Abs(consensus.Moneyline.HomeTrueProb-weightedAvg) > 0.001 {
+		t.Errorf("Expected weighted consensus %.4f, got %.4f (simple avg would be %.4f)",
+			weightedAvg, consensus.Moneyline.HomeTrueProb, simpleAvg)
+	}
+
+	// Verify consensus is closer to Pinnacle than simple average would be
+	if math.Abs(consensus.Moneyline.HomeTrueProb-pinnacleHome) >= math.Abs(simpleAvg-pinnacleHome) {
+		t.Errorf("Weighted consensus should be closer to Pinnacle than simple avg")
 	}
 
 	if consensus.Moneyline.BookCount != 2 {

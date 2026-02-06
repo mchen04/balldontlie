@@ -8,24 +8,25 @@ import (
 func main() {
 	fmt.Println("=== DISTRIBUTION INTERPOLATION TEST ===")
 
-	// Test 1: Poisson for rebounds
-	fmt.Println("TEST 1: REBOUNDS (Poisson)")
+	// Test 1: NegBin for rebounds
+	fmt.Println("TEST 1: REBOUNDS (NegBin)")
 	fmt.Println("BDL says: over 9.5 rebounds has 45% probability (need 10+)")
 
-	// Infer lambda
-	lambda := analysis.InferPoissonMean(10, 0.45)
-	fmt.Printf("Inferred mean (λ): %.2f rebounds\n", lambda)
+	// Infer mean using NegBin
+	r := analysis.DefaultDispersion("rebounds", 9.5)
+	mu := analysis.InferNegBinMean(10, 0.45, r)
+	fmt.Printf("Inferred mean (μ): %.2f rebounds (r=%.1f)\n", mu, r)
 
 	// Now calculate for various Kalshi lines
 	kalshiLines := []int{6, 8, 10, 12, 14}
 	fmt.Println("\nEstimated probabilities for Kalshi lines:")
 	for _, k := range kalshiLines {
-		prob := analysis.PoissonCDFOver(k, lambda)
+		prob := analysis.NegBinCDFOver(k, mu, r)
 		fmt.Printf("  P(X >= %d) = %.1f%%\n", k, prob*100)
 	}
 
 	// Verify our inference is correct
-	fmt.Printf("\nVerification: P(X >= 10) should be ~45%%: %.1f%%\n", analysis.PoissonCDFOver(10, lambda)*100)
+	fmt.Printf("\nVerification: P(X >= 10) should be ~45%%: %.1f%%\n", analysis.NegBinCDFOver(10, mu, r)*100)
 
 	// Test 2: Using the high-level function
 	fmt.Println("\n====================================================")

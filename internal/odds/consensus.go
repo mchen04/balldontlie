@@ -4,6 +4,7 @@ import (
 	"math"
 
 	"sports-betting-bot/internal/api"
+	"sports-betting-bot/internal/mathutil"
 )
 
 const (
@@ -15,6 +16,10 @@ const (
 	// NBATotalStdDev is the standard deviation for NBA totals
 	// Based on Boyd's Bets O/U margin data (empirical range 15-21)
 	NBATotalStdDev = 17.0
+
+	// Sharp books get 2x weight in consensus averaging
+	sharpWeight = 2.0
+	softWeight  = 1.0
 )
 
 // MarketType represents the type of betting market
@@ -68,8 +73,23 @@ type KalshiOdds struct {
 	Total     *api.Total
 }
 
+// weightedProb holds a probability pair with its consensus weight
+type weightedProb struct {
+	a, b   float64
+	weight float64
+}
+
+// vendorWeight returns sharpWeight for sharp books, softWeight otherwise
+func vendorWeight(name string) float64 {
+	if api.IsSharpBook(name) {
+		return sharpWeight
+	}
+	return softWeight
+}
+
 // CalculateConsensus computes consensus true probabilities from multiple vendors
 // Normalizes spread/total probabilities to match Kalshi's line
+// Sharp books (Pinnacle, Circa, etc.) are weighted 2x vs soft books
 func CalculateConsensus(gameOdds api.GameOdds) ConsensusOdds {
 	consensus := ConsensusOdds{
 		GameID:   gameOdds.GameID,
@@ -90,9 +110,9 @@ func CalculateConsensus(gameOdds api.GameOdds) ConsensusOdds {
 		}
 	}
 
-	var mlProbs []struct{ home, away float64 }
-	var spreadProbs []struct{ homeCover, awayCover float64 }
-	var totalProbs []struct{ over, under float64 }
+	var mlProbs []weightedProb
+	var spreadProbs []weightedProb
+	var totalProbs []weightedProb
 
 	// Get Kalshi lines as targets for normalization
 	var kalshiSpreadLine, kalshiTotalLine float64
@@ -111,11 +131,13 @@ func CalculateConsensus(gameOdds api.GameOdds) ConsensusOdds {
 			continue
 		}
 
+		w := vendorWeight(vendor.Name)
+
 		// Moneyline (no normalization needed)
 		if vendor.Moneyline != nil && vendor.Moneyline.Home != 0 && vendor.Moneyline.Away != 0 {
 			homeProb, awayProb := RemoveVigPowerFromAmerican(vendor.Moneyline.Home, vendor.Moneyline.Away)
 			if homeProb > 0 && awayProb > 0 {
-				mlProbs = append(mlProbs, struct{ home, away float64 }{homeProb, awayProb})
+				mlProbs = append(mlProbs, weightedProb{homeProb, awayProb, w})
 			}
 		}
 
@@ -130,7 +152,7 @@ func CalculateConsensus(gameOdds api.GameOdds) ConsensusOdds {
 						vendor.Spread.HomeSpread, kalshiSpreadLine,
 					)
 				}
-				spreadProbs = append(spreadProbs, struct{ homeCover, awayCover float64 }{homeCover, awayCover})
+				spreadProbs = append(spreadProbs, weightedProb{homeCover, awayCover, w})
 			}
 		}
 
@@ -145,52 +167,52 @@ func CalculateConsensus(gameOdds api.GameOdds) ConsensusOdds {
 						vendor.Total.Line, kalshiTotalLine,
 					)
 				}
-				totalProbs = append(totalProbs, struct{ over, under float64 }{overProb, underProb})
+				totalProbs = append(totalProbs, weightedProb{overProb, underProb, w})
 			}
 		}
 	}
 
-	// Calculate simple averages across all books
+	// Calculate weighted averages across all books
 	if len(mlProbs) > 0 {
-		var homeSum, awaySum float64
+		var homeSum, awaySum, wSum float64
 		for _, p := range mlProbs {
-			homeSum += p.home
-			awaySum += p.away
+			homeSum += p.a * p.weight
+			awaySum += p.b * p.weight
+			wSum += p.weight
 		}
-		n := float64(len(mlProbs))
 		consensus.Moneyline = &MoneylineConsensus{
-			HomeTrueProb: homeSum / n,
-			AwayTrueProb: awaySum / n,
+			HomeTrueProb: homeSum / wSum,
+			AwayTrueProb: awaySum / wSum,
 			BookCount:    len(mlProbs),
 		}
 	}
 
 	if len(spreadProbs) > 0 {
-		var homeCoverSum, awayCoverSum float64
+		var homeCoverSum, awayCoverSum, wSum float64
 		for _, p := range spreadProbs {
-			homeCoverSum += p.homeCover
-			awayCoverSum += p.awayCover
+			homeCoverSum += p.a * p.weight
+			awayCoverSum += p.b * p.weight
+			wSum += p.weight
 		}
-		n := float64(len(spreadProbs))
 		consensus.Spread = &SpreadConsensus{
 			HomeSpread:    kalshiSpreadLine, // Use Kalshi line as the reference
-			HomeCoverProb: homeCoverSum / n,
-			AwayCoverProb: awayCoverSum / n,
+			HomeCoverProb: homeCoverSum / wSum,
+			AwayCoverProb: awayCoverSum / wSum,
 			BookCount:     len(spreadProbs),
 		}
 	}
 
 	if len(totalProbs) > 0 {
-		var overSum, underSum float64
+		var overSum, underSum, wSum float64
 		for _, p := range totalProbs {
-			overSum += p.over
-			underSum += p.under
+			overSum += p.a * p.weight
+			underSum += p.b * p.weight
+			wSum += p.weight
 		}
-		n := float64(len(totalProbs))
 		consensus.Total = &TotalConsensus{
 			Line:      kalshiTotalLine, // Use Kalshi line as the reference
-			OverProb:  overSum / n,
-			UnderProb: underSum / n,
+			OverProb:  overSum / wSum,
+			UnderProb: underSum / wSum,
 			BookCount: len(totalProbs),
 		}
 	}
@@ -212,7 +234,7 @@ func normalizeSpreadProb(homeCover, awayCover, bookLine, targetLine float64) (fl
 	}
 
 	// Convert book's cover probability to a z-score
-	bookZ := normalInvCDF(homeCover)
+	bookZ := mathutil.NormalInvCDF(homeCover)
 
 	// Line difference: positive when target is easier for home to cover
 	// For negative spreads: -5.5 > -6.0, so targetLine - bookLine > 0 when easier
@@ -224,7 +246,7 @@ func normalizeSpreadProb(homeCover, awayCover, bookLine, targetLine float64) (fl
 	targetZ := bookZ + (lineDiff / NBASpreadStdDev)
 
 	// Convert back to probability
-	adjustedHome := normalCDF(targetZ)
+	adjustedHome := mathutil.NormalCDF(targetZ)
 	adjustedAway := 1.0 - adjustedHome
 
 	// Clamp to valid range
@@ -244,7 +266,7 @@ func normalizeTotalProb(overProb, underProb, bookLine, targetLine float64) (floa
 	}
 
 	// Convert book's over probability to z-score
-	bookZ := normalInvCDF(overProb)
+	bookZ := mathutil.NormalInvCDF(overProb)
 
 	// For totals: lower target = easier to go over
 	// lineDiff > 0 means target is higher (harder to go over)
@@ -252,7 +274,7 @@ func normalizeTotalProb(overProb, underProb, bookLine, targetLine float64) (floa
 	targetZ := bookZ - (lineDiff / NBATotalStdDev)
 
 	// Convert back to probability
-	adjustedOver := normalCDF(targetZ)
+	adjustedOver := mathutil.NormalCDF(targetZ)
 	adjustedUnder := 1.0 - adjustedOver
 
 	// Clamp to valid range
@@ -260,77 +282,4 @@ func normalizeTotalProb(overProb, underProb, bookLine, targetLine float64) (floa
 	adjustedUnder = math.Max(0.01, math.Min(0.99, adjustedUnder))
 
 	return adjustedOver, adjustedUnder
-}
-
-// normalCDF calculates the cumulative distribution function of the standard normal distribution
-// P(Z <= z) where Z ~ N(0,1)
-func normalCDF(z float64) float64 {
-	return 0.5 * (1 + math.Erf(z/math.Sqrt2))
-}
-
-// normalInvCDF calculates the inverse CDF (quantile function) of the standard normal distribution
-// Returns z such that P(Z <= z) = p
-// Uses Abramowitz and Stegun approximation
-func normalInvCDF(p float64) float64 {
-	if p <= 0 {
-		return -10 // Clamp to reasonable minimum
-	}
-	if p >= 1 {
-		return 10 // Clamp to reasonable maximum
-	}
-	if p == 0.5 {
-		return 0
-	}
-
-	// Rational approximation for the inverse normal CDF
-	// Abramowitz and Stegun formula 26.2.23
-	const (
-		a1 = -3.969683028665376e+01
-		a2 = 2.209460984245205e+02
-		a3 = -2.759285104469687e+02
-		a4 = 1.383577518672690e+02
-		a5 = -3.066479806614716e+01
-		a6 = 2.506628277459239e+00
-
-		b1 = -5.447609879822406e+01
-		b2 = 1.615858368580409e+02
-		b3 = -1.556989798598866e+02
-		b4 = 6.680131188771972e+01
-		b5 = -1.328068155288572e+01
-
-		c1 = -7.784894002430293e-03
-		c2 = -3.223964580411365e-01
-		c3 = -2.400758277161838e+00
-		c4 = -2.549732539343734e+00
-		c5 = 4.374664141464968e+00
-		c6 = 2.938163982698783e+00
-
-		d1 = 7.784695709041462e-03
-		d2 = 3.224671290700398e-01
-		d3 = 2.445134137142996e+00
-		d4 = 3.754408661907416e+00
-
-		pLow  = 0.02425
-		pHigh = 1 - pLow
-	)
-
-	var q, r float64
-
-	if p < pLow {
-		// Rational approximation for lower region
-		q = math.Sqrt(-2 * math.Log(p))
-		return (((((c1*q+c2)*q+c3)*q+c4)*q+c5)*q + c6) /
-			((((d1*q+d2)*q+d3)*q+d4)*q + 1)
-	} else if p <= pHigh {
-		// Rational approximation for central region
-		q = p - 0.5
-		r = q * q
-		return (((((a1*r+a2)*r+a3)*r+a4)*r+a5)*r + a6) * q /
-			(((((b1*r+b2)*r+b3)*r+b4)*r+b5)*r + 1)
-	} else {
-		// Rational approximation for upper region
-		q = math.Sqrt(-2 * math.Log(1-p))
-		return -(((((c1*q+c2)*q+c3)*q+c4)*q+c5)*q + c6) /
-			((((d1*q+d2)*q+d3)*q+d4)*q + 1)
-	}
 }
