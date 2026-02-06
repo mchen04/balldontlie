@@ -42,7 +42,6 @@ func TestFullPipeline(t *testing.T) {
 	// Step 2: Find opportunities
 	cfg := analysis.Config{
 		EVThreshold:   0.02, // 2% threshold for testing
-		KalshiFee:     0.012,
 		KellyFraction: 0.25,
 	}
 
@@ -63,7 +62,7 @@ func TestFullPipeline(t *testing.T) {
 		}
 
 		// Verify adjusted EV accounts for fees
-		expectedAdjEV := analysis.CalculateAdjustedEV(opp.TrueProb, opp.KalshiPrice, cfg.KalshiFee)
+		expectedAdjEV := analysis.CalculateAdjustedEV(opp.TrueProb, opp.KalshiPrice)
 		if math.Abs(opp.AdjustedEV-expectedAdjEV) > 0.001 {
 			t.Errorf("Adjusted EV mismatch: got %.4f, expected %.4f", opp.AdjustedEV, expectedAdjEV)
 		}
@@ -133,7 +132,7 @@ func TestPositionTrackingAndHedge(t *testing.T) {
 	}
 
 	allPositions, _ := db.GetAllPositions()
-	hedges := positions.FindHedgeOpportunities(allPositions, consensus, 0.012)
+	hedges := positions.FindHedgeOpportunities(allPositions, consensus)
 
 	t.Logf("Found %d hedge opportunities", len(hedges))
 	for _, h := range hedges {
@@ -141,11 +140,11 @@ func TestPositionTrackingAndHedge(t *testing.T) {
 	}
 
 	// With entry at $0.45 and opposite at $0.50, total = $0.95
-	// Hedge fee = $0.50 * 0.012 = $0.006
-	// Profit = $1.00 - $0.95 - $0.006 = $0.044 per contract
-	// For 100 contracts = $4.40
+	// Hedge fee = 0.07 * 0.50 * 0.50 = 0.0175
+	// Profit = $1.00 - $0.95 - $0.0175 = $0.0325 per contract
+	// For 100 contracts = $3.25
 	if len(hedges) > 0 {
-		expectedProfit := (1.0 - 0.45 - 0.50 - (0.50 * 0.012)) * 100
+		expectedProfit := (1.0 - 0.45 - 0.50 - (0.07 * 0.50 * 0.50)) * 100
 		if math.Abs(hedges[0].GuaranteedProfit-expectedProfit) > 0.01 {
 			t.Errorf("Hedge profit mismatch: got $%.2f, expected $%.2f",
 				hedges[0].GuaranteedProfit, expectedProfit)
@@ -307,44 +306,40 @@ func TestEVCalculationAccuracy(t *testing.T) {
 		name        string
 		trueProb    float64
 		kalshiPrice float64
-		fee         float64
 		expectedEV  float64
 	}{
 		{
 			name:        "5% edge on coin flip",
 			trueProb:    0.55,
 			kalshiPrice: 0.50,
-			fee:         0.012,
 			// Raw EV = 0.55 * 0.50 - 0.45 * 0.50 = 0.275 - 0.225 = 0.05
-			// Fee = 0.50 * 0.012 = 0.006
-			// Adj EV = 0.05 - 0.006 = 0.044
-			expectedEV: 0.044,
+			// Fee = 0.07 * 0.50 * 0.50 = 0.0175
+			// Adj EV = 0.05 - 0.0175 = 0.0325
+			expectedEV: 0.0325,
 		},
 		{
 			name:        "10% edge on underdog",
 			trueProb:    0.35,
 			kalshiPrice: 0.25,
-			fee:         0.012,
 			// Raw EV = 0.35 * 0.75 - 0.65 * 0.25 = 0.2625 - 0.1625 = 0.10
-			// Fee = 0.25 * 0.012 = 0.003
-			// Adj EV = 0.10 - 0.003 = 0.097
-			expectedEV: 0.097,
+			// Fee = 0.07 * 0.25 * 0.75 = 0.013125
+			// Adj EV = 0.10 - 0.013125 = 0.086875
+			expectedEV: 0.086875,
 		},
 		{
 			name:        "Negative EV (should not bet)",
 			trueProb:    0.48,
 			kalshiPrice: 0.50,
-			fee:         0.012,
 			// Raw EV = 0.48 * 0.50 - 0.52 * 0.50 = -0.02
-			// Fee = 0.006
-			// Adj EV = -0.026
-			expectedEV: -0.026,
+			// Fee = 0.07 * 0.50 * 0.50 = 0.0175
+			// Adj EV = -0.02 - 0.0175 = -0.0375
+			expectedEV: -0.0375,
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			adjEV := analysis.CalculateAdjustedEV(tc.trueProb, tc.kalshiPrice, tc.fee)
+			adjEV := analysis.CalculateAdjustedEV(tc.trueProb, tc.kalshiPrice)
 			if math.Abs(adjEV-tc.expectedEV) > 0.001 {
 				t.Errorf("EV calculation wrong: got %.4f, expected %.4f", adjEV, tc.expectedEV)
 			}
@@ -402,12 +397,12 @@ func TestKellyAccuracy(t *testing.T) {
 // TestHedgeProfitCalculation verifies hedge math
 func TestHedgeProfitCalculation(t *testing.T) {
 	// Scenario: Bought YES at $0.45, now NO is $0.50
-	// Total cost = $0.95, hedge fee = $0.50 * 1.2% = $0.006
-	// Profit = $1.00 - $0.95 - $0.006 = $0.044 per contract
+	// Total cost = $0.95, hedge fee = 0.07 * 0.50 * 0.50 = $0.0175
+	// Profit = $1.00 - $0.95 - $0.0175 = $0.0325 per contract
 
-	contracts, profit := positions.CalculateHedgeSize(0.45, 0.50, 100, 0.012)
+	contracts, profit := positions.CalculateHedgeSize(0.45, 0.50, 100)
 
-	expectedProfit := (1.0 - 0.45 - 0.50 - (0.50 * 0.012)) * 100 // $4.40
+	expectedProfit := (1.0 - 0.45 - 0.50 - (0.07 * 0.50 * 0.50)) * 100 // $3.25
 
 	if contracts != 100 {
 		t.Errorf("Expected 100 contracts, got %d", contracts)
@@ -494,7 +489,6 @@ func TestOpportunityDetection(t *testing.T) {
 
 	cfg := analysis.Config{
 		EVThreshold:   0.03,
-		KalshiFee:     0.012,
 		KellyFraction: 0.25,
 	}
 
@@ -517,9 +511,9 @@ func TestOpportunityDetection(t *testing.T) {
 		}
 
 		// Verify EV is significant
-		// True=58%, Price=50%, Raw EV=8%, Fee=0.6%, Adj EV=7.4%
-		if opp.AdjustedEV < 0.07 {
-			t.Errorf("Expected AdjustedEV > 7%%, got %.2f%%", opp.AdjustedEV*100)
+		// True=58%, Price=50%, Raw EV=8%, Fee=1.75%, Adj EV=6.25%
+		if opp.AdjustedEV < 0.06 {
+			t.Errorf("Expected AdjustedEV > 6%%, got %.2f%%", opp.AdjustedEV*100)
 		}
 	}
 }

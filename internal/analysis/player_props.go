@@ -133,7 +133,7 @@ func FindPlayerPropOpportunities(
 
 		// Check OVER opportunity
 		if consensus.KalshiOverPrice > 0 {
-			adjEV := CalculateAdjustedEV(consensus.OverTrueProb, consensus.KalshiOverPrice, cfg.KalshiFee)
+			adjEV := CalculateAdjustedEV(consensus.OverTrueProb, consensus.KalshiOverPrice)
 			if adjEV >= cfg.EVThreshold {
 				opportunities = append(opportunities, PlayerPropOpportunity{
 					GameID:      gameID,
@@ -157,7 +157,7 @@ func FindPlayerPropOpportunities(
 
 		// Check UNDER opportunity
 		if consensus.KalshiUnderPrice > 0 {
-			adjEV := CalculateAdjustedEV(consensus.UnderTrueProb, consensus.KalshiUnderPrice, cfg.KalshiFee)
+			adjEV := CalculateAdjustedEV(consensus.UnderTrueProb, consensus.KalshiUnderPrice)
 			if adjEV >= cfg.EVThreshold {
 				opportunities = append(opportunities, PlayerPropOpportunity{
 					GameID:      gameID,
@@ -274,7 +274,7 @@ func FindPlayerPropOpportunitiesWithKalshi(
 
 		// Check OVER opportunity (YES on Kalshi)
 		if kalshiOverPrice > 0 && kalshiOverPrice < 1 {
-			adjEV := CalculateAdjustedEV(consensus.OverTrueProb, kalshiOverPrice, cfg.KalshiFee)
+			adjEV := CalculateAdjustedEV(consensus.OverTrueProb, kalshiOverPrice)
 			if adjEV >= cfg.EVThreshold {
 				opportunities = append(opportunities, PlayerPropOpportunity{
 					GameID:       gameID,
@@ -299,7 +299,7 @@ func FindPlayerPropOpportunitiesWithKalshi(
 
 		// Check UNDER opportunity (NO on Kalshi)
 		if kalshiUnderPrice > 0 && kalshiUnderPrice < 1 {
-			adjEV := CalculateAdjustedEV(consensus.UnderTrueProb, kalshiUnderPrice, cfg.KalshiFee)
+			adjEV := CalculateAdjustedEV(consensus.UnderTrueProb, kalshiUnderPrice)
 			if adjEV >= cfg.EVThreshold {
 				opportunities = append(opportunities, PlayerPropOpportunity{
 					GameID:       gameID,
@@ -445,7 +445,7 @@ func FindPlayerPropOpportunitiesWithInterpolation(
 
 			// Check OVER opportunity
 			if kalshiOverPrice > 0 && kalshiOverPrice < 1 {
-				adjEV := CalculateAdjustedEV(estimatedOverProb, kalshiOverPrice, cfg.KalshiFee)
+				adjEV := CalculateAdjustedEV(estimatedOverProb, kalshiOverPrice)
 				if adjEV >= cfg.EVThreshold {
 					opportunities = append(opportunities, PlayerPropOpportunity{
 						GameID:       gameID,
@@ -470,7 +470,7 @@ func FindPlayerPropOpportunitiesWithInterpolation(
 
 			// Check UNDER opportunity
 			if kalshiUnderPrice > 0 && kalshiUnderPrice < 1 {
-				adjEV := CalculateAdjustedEV(estimatedUnderProb, kalshiUnderPrice, cfg.KalshiFee)
+				adjEV := CalculateAdjustedEV(estimatedUnderProb, kalshiUnderPrice)
 				if adjEV >= cfg.EVThreshold {
 					opportunities = append(opportunities, PlayerPropOpportunity{
 						GameID:       gameID,

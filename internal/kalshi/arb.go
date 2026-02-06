@@ -19,7 +19,6 @@ type ArbOpportunity struct {
 
 // ArbConfig holds configuration for arbitrage detection
 type ArbConfig struct {
-	KalshiFee       float64 // Fee percentage (e.g., 0.012 = 1.2%)
 	MinProfitCents  float64 // Minimum profit per contract to consider (default: 0.5 cents)
 	MinProfitPct    float64 // Minimum profit percentage (default: 0.5%)
 }
@@ -27,7 +26,6 @@ type ArbConfig struct {
 // DefaultArbConfig returns sensible defaults
 func DefaultArbConfig() ArbConfig {
 	return ArbConfig{
-		KalshiFee:      0.012,
 		MinProfitCents: 0.5,
 		MinProfitPct:   0.005, // 0.5%
 	}
@@ -69,10 +67,9 @@ func AnalyzeArbFromBook(book *OrderBookResponse, ticker string, config ArbConfig
 	// Total cost to buy both sides
 	totalCost := yesBestAsk + noBestAsk
 
-	// Calculate fees on both legs
-	// Fee is charged on the price paid
-	yesFee := float64(yesBestAsk) * config.KalshiFee
-	noFee := float64(noBestAsk) * config.KalshiFee
+	// Calculate fees on both legs using actual Kalshi fee formula
+	yesFee := TakerFeeCents(yesBestAsk)
+	noFee := TakerFeeCents(noBestAsk)
 	totalFees := yesFee + noFee
 
 	// Guaranteed return is $1 (100 cents) per contract
@@ -141,7 +138,7 @@ func DetectPositionArb(
 	totalCost := entryPriceCents + oppositeAsk
 
 	// Fee only on the NEW trade (entry fee already paid)
-	newFee := float64(oppositeAsk) * config.KalshiFee
+	newFee := TakerFeeCents(oppositeAsk)
 
 	// Profit = 100 - totalCost - newFee
 	profitCents := 100.0 - float64(totalCost) - newFee
@@ -273,11 +270,12 @@ func getBestAskFromYesBids(yesBids []OrderBookLevel) (bestAsk int, depth int) {
 
 // CalculateArbProfit calculates the profit from an arbitrage trade
 // given specific prices and contract count
-func CalculateArbProfit(yesPriceCents, noPriceCents, contracts int, feeRate float64) float64 {
+func CalculateArbProfit(yesPriceCents, noPriceCents, contracts int) float64 {
 	totalCost := float64(yesPriceCents+noPriceCents) * float64(contracts)
-	fees := totalCost * feeRate
+	yesFees := TakerFeeCents(yesPriceCents) * float64(contracts)
+	noFees := TakerFeeCents(noPriceCents) * float64(contracts)
 	returns := 100.0 * float64(contracts) // $1 per contract guaranteed
-	return returns - totalCost - fees
+	return returns - totalCost - yesFees - noFees
 }
 
 // ExecuteArb executes an arbitrage opportunity by buying both sides

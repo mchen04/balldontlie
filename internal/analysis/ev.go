@@ -1,13 +1,13 @@
 package analysis
 
 import (
+	"sports-betting-bot/internal/kalshi"
 	"sports-betting-bot/internal/odds"
 )
 
 // Config holds analysis configuration
 type Config struct {
 	EVThreshold   float64 // Minimum EV to flag opportunity (e.g., 0.03 = 3%)
-	KalshiFee     float64 // Kalshi fee percentage (e.g., 0.012 = 1.2%)
 	KellyFraction float64 // Fraction of Kelly to use (e.g., 0.25 = quarter Kelly)
 	MinBookCount  int     // Minimum number of books required for consensus (default 4)
 }
@@ -17,7 +17,6 @@ func DefaultConfig() Config {
 	return Config{
 		EVThreshold:   0.03,
 		KellyFraction: 0.25,
-		KalshiFee:     0.012,
 		MinBookCount:  4,
 	}
 }
@@ -52,10 +51,11 @@ func CalculateEV(trueProb, kalshiPrice float64) float64 {
 	return (trueProb * profit) - ((1 - trueProb) * stake)
 }
 
-// CalculateAdjustedEV calculates EV minus Kalshi fees
-func CalculateAdjustedEV(trueProb, kalshiPrice, feePct float64) float64 {
+// CalculateAdjustedEV calculates EV minus Kalshi taker fees.
+// Uses the actual Kalshi fee formula: 0.07 * price * (1-price), capped at $0.0175.
+func CalculateAdjustedEV(trueProb, kalshiPrice float64) float64 {
 	rawEV := CalculateEV(trueProb, kalshiPrice)
-	fee := kalshiPrice * feePct
+	fee := kalshi.TakerFee(kalshiPrice)
 	return rawEV - fee
 }
 
@@ -81,7 +81,7 @@ func FindMoneylineOpportunities(consensus odds.ConsensusOdds, cfg Config) []Oppo
 
 	// Check home team
 	if homeKalshiProb > 0 {
-		adjEV := CalculateAdjustedEV(consensus.Moneyline.HomeTrueProb, homeKalshiProb, cfg.KalshiFee)
+		adjEV := CalculateAdjustedEV(consensus.Moneyline.HomeTrueProb, homeKalshiProb)
 		if adjEV >= cfg.EVThreshold {
 			opps = append(opps, Opportunity{
 				GameID:      consensus.GameID,
@@ -102,7 +102,7 @@ func FindMoneylineOpportunities(consensus odds.ConsensusOdds, cfg Config) []Oppo
 
 	// Check away team
 	if awayKalshiProb > 0 {
-		adjEV := CalculateAdjustedEV(consensus.Moneyline.AwayTrueProb, awayKalshiProb, cfg.KalshiFee)
+		adjEV := CalculateAdjustedEV(consensus.Moneyline.AwayTrueProb, awayKalshiProb)
 		if adjEV >= cfg.EVThreshold {
 			opps = append(opps, Opportunity{
 				GameID:      consensus.GameID,
@@ -145,7 +145,7 @@ func FindSpreadOpportunities(consensus odds.ConsensusOdds, cfg Config) []Opportu
 
 	// Check home cover
 	if homeCoverKalshi > 0 {
-		adjEV := CalculateAdjustedEV(consensus.Spread.HomeCoverProb, homeCoverKalshi, cfg.KalshiFee)
+		adjEV := CalculateAdjustedEV(consensus.Spread.HomeCoverProb, homeCoverKalshi)
 		if adjEV >= cfg.EVThreshold {
 			opps = append(opps, Opportunity{
 				GameID:      consensus.GameID,
@@ -166,7 +166,7 @@ func FindSpreadOpportunities(consensus odds.ConsensusOdds, cfg Config) []Opportu
 
 	// Check away cover
 	if awayCoverKalshi > 0 {
-		adjEV := CalculateAdjustedEV(consensus.Spread.AwayCoverProb, awayCoverKalshi, cfg.KalshiFee)
+		adjEV := CalculateAdjustedEV(consensus.Spread.AwayCoverProb, awayCoverKalshi)
 		if adjEV >= cfg.EVThreshold {
 			opps = append(opps, Opportunity{
 				GameID:      consensus.GameID,
@@ -209,7 +209,7 @@ func FindTotalOpportunities(consensus odds.ConsensusOdds, cfg Config) []Opportun
 
 	// Check over
 	if overKalshi > 0 {
-		adjEV := CalculateAdjustedEV(consensus.Total.OverProb, overKalshi, cfg.KalshiFee)
+		adjEV := CalculateAdjustedEV(consensus.Total.OverProb, overKalshi)
 		if adjEV >= cfg.EVThreshold {
 			opps = append(opps, Opportunity{
 				GameID:      consensus.GameID,
@@ -230,7 +230,7 @@ func FindTotalOpportunities(consensus odds.ConsensusOdds, cfg Config) []Opportun
 
 	// Check under
 	if underKalshi > 0 {
-		adjEV := CalculateAdjustedEV(consensus.Total.UnderProb, underKalshi, cfg.KalshiFee)
+		adjEV := CalculateAdjustedEV(consensus.Total.UnderProb, underKalshi)
 		if adjEV >= cfg.EVThreshold {
 			opps = append(opps, Opportunity{
 				GameID:      consensus.GameID,

@@ -25,7 +25,7 @@ func TestAnalyzeArbFromBook(t *testing.T) {
 				},
 			},
 			wantArb:    true,
-			wantProfit: 14.0, // 100 - 45 - 40 - fees ≈ 14 cents
+			wantProfit: 11.6, // 100 - 45 - 40 - TakerFee(45) - TakerFee(40) ≈ 11.6 cents
 		},
 		{
 			name: "no arb - prices too high",
@@ -92,7 +92,6 @@ func TestCalculateArbProfit(t *testing.T) {
 		yesPrice  int
 		noPrice   int
 		contracts int
-		feeRate   float64
 		wantProfit float64
 	}{
 		{
@@ -100,22 +99,23 @@ func TestCalculateArbProfit(t *testing.T) {
 			yesPrice:   45,
 			noPrice:    40,
 			contracts:  10,
-			feeRate:    0.012,
-			wantProfit: 10*100 - 10*45 - 10*40 - (10*85)*0.012, // 150 - 10.2 = 139.8
+			// Fee: TakerFeeCents(45) = 0.07*0.45*0.55*100 = 1.7325, TakerFeeCents(40) = 0.07*0.40*0.60*100 = 1.68
+			// Total fees = (1.7325 + 1.68) * 10 = 34.125
+			// Profit = 1000 - 450 - 400 - 34.125 = 115.875
+			wantProfit: 1000 - 450 - 400 - (TakerFeeCents(45)+TakerFeeCents(40))*10,
 		},
 		{
 			name:       "no profit arb 55+50",
 			yesPrice:   55,
 			noPrice:    50,
 			contracts:  10,
-			feeRate:    0.012,
-			wantProfit: 10*100 - 10*55 - 10*50 - (10*105)*0.012, // -50 - 12.6 = -62.6
+			wantProfit: 1000 - 550 - 500 - (TakerFeeCents(55)+TakerFeeCents(50))*10,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			profit := CalculateArbProfit(tt.yesPrice, tt.noPrice, tt.contracts, tt.feeRate)
+			profit := CalculateArbProfit(tt.yesPrice, tt.noPrice, tt.contracts)
 			if math.Abs(profit-tt.wantProfit) > 1.0 {
 				t.Errorf("Profit = %.2f, want %.2f", profit, tt.wantProfit)
 			}

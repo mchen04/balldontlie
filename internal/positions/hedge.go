@@ -2,6 +2,7 @@ package positions
 
 import (
 	"fmt"
+	"sports-betting-bot/internal/kalshi"
 	"sports-betting-bot/internal/odds"
 )
 
@@ -16,7 +17,7 @@ type HedgeOpportunity struct {
 
 // FindHedgeOpportunities checks existing positions against current odds
 // for hedging or arbitrage opportunities
-func FindHedgeOpportunities(positions []Position, consensus odds.ConsensusOdds, kalshiFee float64) []HedgeOpportunity {
+func FindHedgeOpportunities(positions []Position, consensus odds.ConsensusOdds) []HedgeOpportunity {
 	var opportunities []HedgeOpportunity
 
 	gameIDStr := fmt.Sprintf("%d", consensus.GameID)
@@ -26,7 +27,7 @@ func FindHedgeOpportunities(positions []Position, consensus odds.ConsensusOdds, 
 			continue
 		}
 
-		opp := checkHedge(pos, consensus, kalshiFee)
+		opp := checkHedge(pos, consensus)
 		if opp != nil {
 			opportunities = append(opportunities, *opp)
 		}
@@ -35,7 +36,7 @@ func FindHedgeOpportunities(positions []Position, consensus odds.ConsensusOdds, 
 	return opportunities
 }
 
-func checkHedge(pos Position, consensus odds.ConsensusOdds, kalshiFee float64) *HedgeOpportunity {
+func checkHedge(pos Position, consensus odds.ConsensusOdds) *HedgeOpportunity {
 	if consensus.KalshiOdds == nil {
 		return nil
 	}
@@ -86,7 +87,7 @@ func checkHedge(pos Position, consensus odds.ConsensusOdds, kalshiFee float64) *
 	// If entry_price + opposite_price < 1.0 (minus fees), guaranteed profit
 	// Note: Entry fee was already paid, only count fee on the NEW hedge trade
 	totalCost := pos.EntryPrice + oppositePrice
-	hedgeFee := oppositePrice * kalshiFee // Only fee on new trade
+	hedgeFee := kalshi.TakerFee(oppositePrice) // Only fee on new trade
 
 	// Guaranteed return is $1 per contract
 	guaranteedProfit := 1.0 - totalCost - hedgeFee
@@ -107,7 +108,7 @@ func checkHedge(pos Position, consensus odds.ConsensusOdds, kalshiFee float64) *
 	// Check if selling current position is profitable
 	// Current position value = 1 - opposite_price (implied by market)
 	currentValue := 1.0 - oppositePrice
-	sellFee := currentValue * kalshiFee // Fee is percentage of sale price
+	sellFee := kalshi.TakerFee(currentValue)
 	sellProfit := currentValue - pos.EntryPrice - sellFee
 
 	if sellProfit > 0.05 { // Only suggest if profit > 5%
@@ -128,15 +129,15 @@ func checkHedge(pos Position, consensus odds.ConsensusOdds, kalshiFee float64) *
 }
 
 // CalculateHedgeSize calculates optimal hedge size for guaranteed profit
-func CalculateHedgeSize(entryPrice, oppositePrice float64, contracts int, kalshiFee float64) (hedgeContracts int, profit float64) {
+func CalculateHedgeSize(entryPrice, oppositePrice float64, contracts int) (hedgeContracts int, profit float64) {
 	// For a perfect hedge with equal contracts:
 	// Cost = entryPrice * contracts + oppositePrice * contracts
-	// Hedge fee = oppositePrice * contracts * kalshiFee (entry fee already paid)
+	// Hedge fee = TakerFee(oppositePrice) * contracts (entry fee already paid)
 	// Return = $1 * contracts
 	// Profit = Return - Cost - HedgeFee
 
 	totalCost := (entryPrice + oppositePrice) * float64(contracts)
-	hedgeFee := oppositePrice * float64(contracts) * kalshiFee
+	hedgeFee := kalshi.TakerFee(oppositePrice) * float64(contracts)
 	profit = float64(contracts) - totalCost - hedgeFee
 
 	return contracts, profit

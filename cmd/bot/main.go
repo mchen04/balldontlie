@@ -28,7 +28,6 @@ var lastMaintenanceLog time.Time
 type Config struct {
 	APIKey        string
 	EVThreshold   float64
-	KalshiFee     float64
 	KellyFraction float64
 	PollInterval  time.Duration
 	DBPath        string
@@ -53,7 +52,6 @@ func loadConfig() Config {
 	cfg := Config{
 		APIKey:        os.Getenv("BALLDONTLIE_API_KEY"),
 		EVThreshold:   0.03,
-		KalshiFee:     0.012,
 		KellyFraction: 0.25,
 		PollInterval:  2 * time.Second, // 2 API calls per poll, so 1 req/sec = 60 req/min (well under 600 limit)
 		DBPath:        "/data/positions.db",
@@ -75,12 +73,6 @@ func loadConfig() Config {
 	if v := os.Getenv("EV_THRESHOLD"); v != "" {
 		if f, err := strconv.ParseFloat(v, 64); err == nil {
 			cfg.EVThreshold = f
-		}
-	}
-
-	if v := os.Getenv("KALSHI_FEE_PCT"); v != "" {
-		if f, err := strconv.ParseFloat(v, 64); err == nil {
-			cfg.KalshiFee = f
 		}
 	}
 
@@ -134,9 +126,6 @@ func validateConfig(cfg Config) error {
 	if cfg.EVThreshold < 0 || cfg.EVThreshold > 1 {
 		return fmt.Errorf("EV_THRESHOLD must be between 0 and 1, got %f", cfg.EVThreshold)
 	}
-	if cfg.KalshiFee < 0 || cfg.KalshiFee > 1 {
-		return fmt.Errorf("KALSHI_FEE_PCT must be between 0 and 1, got %f", cfg.KalshiFee)
-	}
 	if cfg.KellyFraction <= 0 || cfg.KellyFraction > 1 {
 		return fmt.Errorf("KELLY_FRACTION must be between 0 and 1, got %f", cfg.KellyFraction)
 	}
@@ -172,7 +161,6 @@ func main() {
 
 	analysisConfig := analysis.Config{
 		EVThreshold:   cfg.EVThreshold,
-		KalshiFee:     cfg.KalshiFee,
 		KellyFraction: cfg.KellyFraction,
 		MinBookCount:  4, // Require at least 4 books for reliable consensus
 	}
@@ -241,8 +229,8 @@ func main() {
 	}
 
 	// Log startup
-	notifier.LogStartup(fmt.Sprintf(" ev=%.1f%% fee=%.2f%% kelly=%.0f%% poll=%s db=%s mode=%s slippage=%.1f%% minLiq=%d maxBet=%s",
-		cfg.EVThreshold*100, cfg.KalshiFee*100, cfg.KellyFraction*100, cfg.PollInterval, cfg.DBPath,
+	notifier.LogStartup(fmt.Sprintf(" ev=%.1f%% fee=kalshi_formula kelly=%.0f%% poll=%s db=%s mode=%s slippage=%.1f%% minLiq=%d maxBet=%s",
+		cfg.EVThreshold*100, cfg.KellyFraction*100, cfg.PollInterval, cfg.DBPath,
 		execMode, cfg.MaxSlippagePct*100, cfg.MinLiquidityContracts, formatMaxBet(cfg.MaxBetDollars)))
 
 	// Start health check server
@@ -410,7 +398,7 @@ func scanForOpportunities(
 
 		// Check for hedge opportunities on existing positions
 		if db != nil && len(allPositions) > 0 {
-			hedges := positions.FindHedgeOpportunities(allPositions, consensus, cfg.KalshiFee)
+			hedges := positions.FindHedgeOpportunities(allPositions, consensus)
 			for _, hedge := range hedges {
 				notifier.AlertHedge(hedge)
 			}
@@ -485,7 +473,6 @@ func executeOpportunity(
 
 	// Check for existing position on Kalshi - prevent duplicate bets unless arb
 	arbConfig := kalshi.ArbConfig{
-		KalshiFee:      cfg.KalshiFee,
 		MinProfitCents: 0.5,
 		MinProfitPct:   0.005,
 	}
@@ -566,7 +553,7 @@ func executeArbitrage(
 	}
 
 	if execConfig.DryRun {
-		profit := kalshi.CalculateArbProfit(arb.YesPrice, arb.NoPrice, contracts, cfg.KalshiFee)
+		profit := kalshi.CalculateArbProfit(arb.YesPrice, arb.NoPrice, contracts)
 		log.Printf("DRY RUN ARB: %d contracts YES@%d¢+NO@%d¢ profit=$%.2f",
 			contracts, arb.YesPrice, arb.NoPrice, profit/100)
 		return 0
@@ -595,7 +582,6 @@ func executeArbitrage(
 			int(yesResult.AveragePrice),
 			int(noResult.AveragePrice),
 			matchedContracts,
-			cfg.KalshiFee,
 		)
 		log.Printf("ARB FILLED: %d matched, YES@%.0f¢ NO@%.0f¢, profit=$%.2f",
 			matchedContracts, yesResult.AveragePrice, noResult.AveragePrice, profit/100)
@@ -648,7 +634,7 @@ func executeNormalTrade(
 
 	// Recalculate EV with actual fill price
 	actualFillPrice := slippage.AverageFillPrice / 100.0
-	_, adjustedEV := analysis.RecalculateEVWithSlippage(opp.TrueProb, actualFillPrice, cfg.KalshiFee)
+	_, adjustedEV := analysis.RecalculateEVWithSlippage(opp.TrueProb, actualFillPrice)
 
 	if adjustedEV < cfg.EVThreshold {
 		log.Printf("EV degraded %.2f%%->%.2f%% after slippage, skip %s", opp.AdjustedEV*100, adjustedEV*100, ticker)
@@ -683,7 +669,7 @@ func executeNormalTrade(
 	execConfigWithEV := execConfig
 	execConfigWithEV.TrueProb = opp.TrueProb
 	execConfigWithEV.EVThreshold = cfg.EVThreshold
-	execConfigWithEV.FeePct = cfg.KalshiFee
+
 
 	result, err := kalshiClient.PlaceOrder(ticker, side, kalshi.ActionBuy, contracts, execConfigWithEV)
 	if err != nil {
@@ -739,7 +725,6 @@ func executePlayerPropOpportunity(
 
 	// Check for existing position on Kalshi - prevent duplicate bets
 	arbConfig := kalshi.ArbConfig{
-		KalshiFee:      cfg.KalshiFee,
 		MinProfitCents: 0.5,
 		MinProfitPct:   0.005,
 	}
@@ -784,7 +769,7 @@ func executePlayerPropOpportunity(
 
 	// Recalculate EV with actual fill price
 	actualFillPrice := slippage.AverageFillPrice / 100.0
-	_, adjustedEV := analysis.RecalculateEVWithSlippage(opp.TrueProb, actualFillPrice, cfg.KalshiFee)
+	_, adjustedEV := analysis.RecalculateEVWithSlippage(opp.TrueProb, actualFillPrice)
 
 	if adjustedEV < cfg.EVThreshold {
 		log.Printf("EV degraded %.2f%%->%.2f%% after slippage, skip prop %s", opp.AdjustedEV*100, adjustedEV*100, ticker)
@@ -819,7 +804,7 @@ func executePlayerPropOpportunity(
 	execConfigWithEV := execConfig
 	execConfigWithEV.TrueProb = opp.TrueProb
 	execConfigWithEV.EVThreshold = cfg.EVThreshold
-	execConfigWithEV.FeePct = cfg.KalshiFee
+
 
 	result, err := kalshiClient.PlaceOrder(ticker, side, kalshi.ActionBuy, contracts, execConfigWithEV)
 	if err != nil {

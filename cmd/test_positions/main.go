@@ -62,7 +62,6 @@ func main() {
 	testTicker := "KXNBAPTS-26FEB05PHILAL-LALAREAVES15-10"
 
 	arbConfig := kalshi.ArbConfig{
-		KalshiFee:      0.012,
 		MinProfitCents: 0.5,
 		MinProfitPct:   0.005,
 	}

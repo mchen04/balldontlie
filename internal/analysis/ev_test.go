@@ -59,31 +59,28 @@ func TestCalculateAdjustedEV(t *testing.T) {
 		name       string
 		trueProb   float64
 		price      float64
-		fee        float64
 		expectedEV float64
 		delta      float64
 	}{
 		{
-			name:       "EV after 1.2% fee",
+			name:       "EV after Kalshi fee at 50 cents",
 			trueProb:   0.55,
 			price:      0.50,
-			fee:        0.012, // 1.2%
-			expectedEV: 0.05 - (0.50 * 0.012), // 5% - 0.6% = 4.4%
+			expectedEV: 0.05 - 0.0175, // 5% - 1.75% (max fee at 50c)
 			delta:      0.001,
 		},
 		{
 			name:       "Marginal edge wiped by fees",
 			trueProb:   0.51,
 			price:      0.50,
-			fee:        0.012,
-			expectedEV: 0.01 - (0.50 * 0.012), // 1% - 0.6% = 0.4%
+			expectedEV: 0.01 - 0.0175, // 1% - 1.75% = -0.75%
 			delta:       0.001,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := CalculateAdjustedEV(tt.trueProb, tt.price, tt.fee)
+			result := CalculateAdjustedEV(tt.trueProb, tt.price)
 			if math.Abs(result-tt.expectedEV) > tt.delta {
 				t.Errorf("CalculateAdjustedEV = %v, want %v", result, tt.expectedEV)
 			}
@@ -112,9 +109,6 @@ func TestEVThresholdLogic(t *testing.T) {
 	// Test that default config has sensible values
 	if cfg.EVThreshold != 0.03 {
 		t.Errorf("Default EV threshold should be 3%%, got %v", cfg.EVThreshold)
-	}
-	if cfg.KalshiFee != 0.012 {
-		t.Errorf("Default Kalshi fee should be 1.2%%, got %v", cfg.KalshiFee)
 	}
 	if cfg.KellyFraction != 0.25 {
 		t.Errorf("Default Kelly fraction should be 25%%, got %v", cfg.KellyFraction)

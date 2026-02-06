@@ -19,7 +19,6 @@ type OrderConfig struct {
 	// EV verification at execution time
 	TrueProb    float64 // Consensus probability (0-1), set to 0 to skip EV check
 	EVThreshold float64 // Minimum adjusted EV required (e.g., 0.03 = 3%)
-	FeePct      float64 // Kalshi fee percentage (e.g., 0.012 = 1.2%)
 }
 
 // DefaultOrderConfig returns sensible defaults
@@ -134,7 +133,7 @@ func (c *KalshiClient) PlaceOrder(
 	if config.TrueProb > 0 {
 		actualPrice := slippage.AverageFillPrice / 100.0 // Convert cents to probability
 		rawEV := (config.TrueProb * (1 - actualPrice)) - ((1 - config.TrueProb) * actualPrice)
-		adjustedEV := rawEV - (actualPrice * config.FeePct)
+		adjustedEV := rawEV - TakerFee(actualPrice)
 
 		if adjustedEV < config.EVThreshold {
 			return &ExecutionResult{

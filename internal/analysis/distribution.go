@@ -319,10 +319,10 @@ func EstimateProbabilityAtLine(bdlLine float64, bdlProb float64, kalshiLine floa
 		return 0
 	}
 
-	// Continuity correction for output: Kalshi "25+" = P(X >= 25)
-	// In continuous terms: P(X >= 25) = P(X > 24.5)
-	// So use kalshiLine - 0.5 as the threshold
-	return NormalCDFOver(kalshiLine-0.5, mean, estimatedSD)
+	// NormalCDFOver already applies continuity correction internally:
+	// NormalCDFOver(k, μ, σ) = 1 - Φ((k - 0.5 - μ) / σ)
+	// So pass kalshiLine directly — no external adjustment needed.
+	return NormalCDFOver(kalshiLine, mean, estimatedSD)
 }
 
 // EstimateProbabilityFromMultipleLines estimates probability using multiple BDL lines

@@ -1,6 +1,10 @@
 package analysis
 
-import "math"
+import (
+	"math"
+
+	"sports-betting-bot/internal/kalshi"
+)
 
 // CalculateKelly computes the Kelly criterion bet size
 // Kelly formula: f* = (p * b - q) / b
@@ -114,7 +118,7 @@ func AdjustKellyForSlippage(trueProb, bestPrice, actualFillPrice, fraction float
 
 // RecalculateEVWithSlippage computes new EV given actual fill price
 // Returns (rawEV, adjustedEV) accounting for slippage
-func RecalculateEVWithSlippage(trueProb, actualFillPrice, feePct float64) (float64, float64) {
+func RecalculateEVWithSlippage(trueProb, actualFillPrice float64) (float64, float64) {
 	if actualFillPrice <= 0 || actualFillPrice >= 1 {
 		return 0, 0
 	}
@@ -123,7 +127,7 @@ func RecalculateEVWithSlippage(trueProb, actualFillPrice, feePct float64) (float
 	stake := actualFillPrice
 
 	rawEV := (trueProb * profit) - ((1 - trueProb) * stake)
-	fee := actualFillPrice * feePct
+	fee := kalshi.TakerFee(actualFillPrice)
 	adjustedEV := rawEV - fee
 
 	return rawEV, adjustedEV
