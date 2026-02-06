@@ -10,9 +10,17 @@ A 24/7 NBA betting analysis bot written in **Go** that identifies +EV opportunit
 
 ```
 sports-betting-bot/
-├── cmd/bot/                    # Entry point
-│   └── main.go                 # Orchestration, config, polling loop
+├── cmd/bot/                    # Entry point (~155 lines)
+│   └── main.go                 # Init, config, startup
 ├── internal/
+│   ├── config/                 # Configuration management
+│   │   ├── config.go           # Load, Validate, named constants
+│   │   └── config_test.go      # Config tests
+│   ├── engine/                 # Core orchestration
+│   │   ├── engine.go           # Polling loop, scan cycle
+│   │   ├── executor.go         # Unified trade execution
+│   │   ├── executor_test.go    # Executor tests
+│   │   └── ticker.go           # Ticker mapping
 │   ├── api/                    # External API clients
 │   │   ├── client.go           # Rate-limited HTTP client (600 req/min)
 │   │   └── balldontlie.go      # Ball Don't Lie API integration
@@ -36,9 +44,9 @@ sports-betting-bot/
 │   │   ├── db.go               # SQLite storage
 │   │   └── hedge.go            # Hedge detection
 │   └── alerts/                 # Notification system
-│       └── notify.go           # Deduped console alerts
+│       ├── notify.go           # Deduped console alerts
+│       └── notify_test.go      # Alert tests
 ├── docs/                       # Documentation
-├── tasks/                      # Task tracking
 ├── Dockerfile                  # Multi-stage build
 ├── fly.toml                    # Fly.io deployment
 └── go.mod                      # Go 1.25.6
@@ -61,7 +69,7 @@ sports-betting-bot/
 ### 3. Opportunity Detection
 - Compares consensus "true" probability against Kalshi price
 - Auto-detects Kalshi price format (American odds vs cents)
-- Calculates fee-adjusted EV (accounts for Kalshi's ~1.2% trading fee)
+- Calculates fee-adjusted EV (accounts for Kalshi's dynamic fee: `0.07 * price * (1-price)`, capped at $0.0175)
 - Filters opportunities by configurable EV threshold (default 3%)
 - Computes Kelly criterion bet sizing (default quarter-Kelly)
 
@@ -130,6 +138,15 @@ sports-betting-bot/
 
 ## Key Modules
 
+### `internal/config` - Configuration
+- **Config**: Loads from `.env` and environment variables with named constants for all defaults
+- **Validate**: Range-checks all config values before startup
+
+### `internal/engine` - Orchestration
+- **Engine**: Main polling loop, scan cycle, shutdown handling (uses `log/slog`)
+- **Executor**: Unified trade execution for both game and player prop opportunities
+- **Ticker**: Maps opportunities to Kalshi market tickers
+
 ### `internal/api` - Data Sources
 - **RateLimitedClient**: Token bucket rate limiting with exponential backoff
 - **BallDontLieClient**: Fetches today's odds, player props, handles pagination
@@ -164,7 +181,8 @@ When books have different spread lines (e.g., -5.5 vs -6.0), probabilities are n
 ### EV Calculation
 ```
 Raw EV = (trueProb × profit) - ((1 - trueProb) × stake)
-Adjusted EV = Raw EV - (stake × 1.2% fee)
+Fee = 0.07 × price × (1 - price), capped at $0.0175
+Adjusted EV = Raw EV - Fee
 ```
 
 ### Kelly Criterion
@@ -178,7 +196,6 @@ f  = f* × 0.25           [quarter-Kelly]
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `EV_THRESHOLD` | 3% | Minimum adjusted EV to alert |
-| `KALSHI_FEE_PCT` | 1.2% | Trading fee deducted from EV |
 | `KELLY_FRACTION` | 25% | Fraction of full Kelly |
 | `POLL_INTERVAL_MS` | 2000ms | Time between API polls |
 | `AUTO_EXECUTE` | false | Auto-execute trades on Kalshi |

@@ -26,22 +26,27 @@ func NewNotifier(cooldown time.Duration) *Notifier {
 	}
 }
 
-// AlertOpportunity sends an alert for a +EV opportunity
-func (n *Notifier) AlertOpportunity(opp analysis.Opportunity) {
-	key := fmt.Sprintf("%d-%s-%s", opp.GameID, opp.MarketType, opp.Side)
-
+// checkCooldown returns true if the alert should be suppressed (still in cooldown).
+// If not suppressed, it records the current time for the key.
+func (n *Notifier) checkCooldown(key string) bool {
 	n.mu.Lock()
-	// Check cooldown
+	defer n.mu.Unlock()
 	if lastTime, ok := n.lastAlerts[key]; ok {
 		if time.Since(lastTime) < n.cooldown {
-			n.mu.Unlock()
-			return
+			return true
 		}
 	}
 	n.lastAlerts[key] = time.Now()
-	n.mu.Unlock()
+	return false
+}
 
-	// Format the alert
+// AlertOpportunity sends an alert for a +EV opportunity
+func (n *Notifier) AlertOpportunity(opp analysis.Opportunity) {
+	key := fmt.Sprintf("%d-%s-%s", opp.GameID, opp.MarketType, opp.Side)
+	if n.checkCooldown(key) {
+		return
+	}
+
 	var sideDesc string
 	switch opp.Side {
 	case "home":
@@ -62,17 +67,9 @@ func (n *Notifier) AlertOpportunity(opp analysis.Opportunity) {
 // AlertPlayerProp sends an alert for a +EV player prop opportunity
 func (n *Notifier) AlertPlayerProp(opp analysis.PlayerPropOpportunity) {
 	key := fmt.Sprintf("prop-%d-%s-%s-%.1f-%s", opp.PlayerID, opp.PropType, opp.PlayerName, opp.Line, opp.Side)
-
-	n.mu.Lock()
-	// Check cooldown
-	if lastTime, ok := n.lastAlerts[key]; ok {
-		if time.Since(lastTime) < n.cooldown {
-			n.mu.Unlock()
-			return
-		}
+	if n.checkCooldown(key) {
+		return
 	}
-	n.lastAlerts[key] = time.Now()
-	n.mu.Unlock()
 
 	log.Printf("+EV PROP: %s %s %.0f %s (%s@%s) | prob=%.1f%%/%dbk kalshi=$%.2f ev=%.2f%% kelly=%.1f%%",
 		opp.PlayerName, strings.ToUpper(opp.Side), opp.Line, opp.PropType,
@@ -85,16 +82,9 @@ func (n *Notifier) AlertPlayerProp(opp analysis.PlayerPropOpportunity) {
 // AlertHedge sends an alert for a hedge opportunity
 func (n *Notifier) AlertHedge(hedge positions.HedgeOpportunity) {
 	key := fmt.Sprintf("hedge-%d-%s-%s", hedge.Position.ID, hedge.Position.MarketType, hedge.Position.Side)
-
-	n.mu.Lock()
-	if lastTime, ok := n.lastAlerts[key]; ok {
-		if time.Since(lastTime) < n.cooldown {
-			n.mu.Unlock()
-			return
-		}
+	if n.checkCooldown(key) {
+		return
 	}
-	n.lastAlerts[key] = time.Now()
-	n.mu.Unlock()
 
 	emoji := "🔒"
 	if hedge.Action == "close" {

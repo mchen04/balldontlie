@@ -170,7 +170,8 @@ Same formula as game markets:
 
 ```
 rawEV = trueProb - kalshiPrice
-adjustedEV = rawEV - (kalshiPrice × 0.012)
+fee = 0.07 × kalshiPrice × (1 - kalshiPrice), capped at 0.0175
+adjustedEV = rawEV - fee
 ```
 
 ### Minimum Requirements

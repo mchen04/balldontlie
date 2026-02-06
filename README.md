@@ -14,7 +14,7 @@ A 24/7 NBA betting analysis bot written in Go that identifies +EV opportunities 
 
 - Multi-book consensus with multiplicative vig removal
 - Spread/total line normalization using normal distribution (σ ≈ 11.5 for NBA)
-- Fee-adjusted EV calculation (accounts for Kalshi's 1.2% fee)
+- Fee-adjusted EV calculation (accounts for Kalshi's dynamic fee: `0.07 * price * (1-price)`, capped at $0.0175)
 - Order book depth and slippage analysis
 - Arbitrage detection on existing positions
 - SQLite position tracking with hedge alerts
@@ -24,8 +24,8 @@ A 24/7 NBA betting analysis bot written in Go that identifies +EV opportunities 
 
 ```bash
 # Clone
-git clone https://github.com/mchen04/balldontlie.git
-cd balldontlie
+git clone https://github.com/mchen04/sports-betting-bot.git
+cd sports-betting-bot
 
 # Configure
 cp .env.example .env
@@ -60,12 +60,14 @@ See [docs/architecture.md](docs/architecture.md) for full configuration options.
 ## Project Structure
 
 ```
-├── cmd/bot/           # Entry point
+├── cmd/bot/           # Entry point (~155 lines)
 ├── internal/
 │   ├── api/           # balldontlie.io client
 │   ├── kalshi/        # Kalshi API, orderbook, orders
 │   ├── odds/          # Consensus, conversion, vig removal
 │   ├── analysis/      # EV detection, Kelly sizing
+│   ├── config/        # Configuration loading & validation
+│   ├── engine/        # Polling loop, trade execution, ticker mapping
 │   ├── positions/     # SQLite tracking, hedge detection
 │   └── alerts/        # Notification system
 ├── Dockerfile         # Multi-stage build

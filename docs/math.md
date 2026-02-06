@@ -124,10 +124,16 @@ rawEV = trueProb - price
 
 ### Fee-Adjusted EV
 
-Kalshi charges ~1.2% fee on the contract price:
+Kalshi charges a dynamic taker fee based on the contract price:
 
 ```
-adjustedEV = rawEV - (price × 0.012)
+fee = 0.07 × price × (1 - price), capped at $0.0175 per contract
+```
+
+This means fees are highest at 50¢ (max $0.0175) and decrease towards 0¢ or 100¢.
+
+```
+adjustedEV = rawEV - fee
 ```
 
 ### Example Calculation
@@ -137,11 +143,11 @@ True probability: 55%
 Kalshi price: 50¢
 
 rawEV = 0.55 - 0.50 = 0.05 (5%)
-fee = 0.50 × 0.012 = 0.006 (0.6%)
-adjustedEV = 0.05 - 0.006 = 0.044 (4.4%)
+fee = 0.07 × 0.50 × 0.50 = 0.0175 (1.75%)
+adjustedEV = 0.05 - 0.0175 = 0.0325 (3.25%)
 ```
 
-This bet has +4.4% EV after fees.
+This bet has +3.25% EV after fees.
 
 ---
 
