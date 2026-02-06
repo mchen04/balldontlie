@@ -210,8 +210,19 @@ func ExecuteTrade(
 		return 0
 	}
 
-	// Recalculate EV with actual fill price
+	// Recompute Kelly at actual fill price and take the smaller size
 	actualFillPrice := slippage.AverageFillPrice / 100.0
+	adjustedContracts := analysis.CalculateKellyContracts(
+		tp.TrueProb, actualFillPrice, cfg.KellyFraction,
+		bankroll, cfg.MaxBetDollars, int(slippage.AverageFillPrice))
+	if adjustedContracts < contracts {
+		contracts = adjustedContracts
+	}
+	if contracts < execConfig.MinLiquidityContracts {
+		return 0
+	}
+
+	// Recalculate EV with actual fill price
 	_, adjustedEV := analysis.RecalculateEVWithSlippage(tp.TrueProb, actualFillPrice)
 
 	if adjustedEV < cfg.EVThreshold {
@@ -330,8 +341,14 @@ func ExecuteArbitrage(
 
 	yesResult, noResult, err := kalshiClient.ExecuteArb(arb, contracts, execConfig)
 	if err != nil {
-		slog.Error("Arb execution failed", "err", err)
-		return 0
+		// With concurrent execution, one leg may have filled even on error
+		slog.Error("Arb execution error", "err", err)
+		if yesResult == nil && noResult == nil {
+			return 0
+		}
+		slog.Warn("Partial arb fill",
+			"yesFilled", yesResult != nil && yesResult.FilledContracts > 0,
+			"noFilled", noResult != nil && noResult.FilledContracts > 0)
 	}
 
 	totalSpent := 0.0

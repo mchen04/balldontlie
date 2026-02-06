@@ -6,12 +6,12 @@ import (
 	"sports-betting-bot/internal/kalshi"
 )
 
-// CalculateKelly computes the Kelly criterion bet size
-// Kelly formula: f* = (p * b - q) / b
-// where: p = probability of winning, q = 1-p, b = odds received (profit/stake)
+// CalculateKelly computes the Kelly criterion bet size with fee adjustment.
+// Kelly formula: f* = (p * bNet - q) / bNet
+// where: p = probability of winning, q = 1-p, bNet = fee-adjusted odds
 //
-// For Kalshi: stake = price, profit = 1 - price
-// So b = (1 - price) / price
+// For Kalshi: effectiveStake = price + fee, effectiveProfit = 1 - price - fee
+// So bNet = effectiveProfit / effectiveStake
 //
 // fraction parameter scales the result (e.g., 0.25 for quarter Kelly)
 func CalculateKelly(trueProb, kalshiPrice, fraction float64) float64 {
@@ -21,9 +21,15 @@ func CalculateKelly(trueProb, kalshiPrice, fraction float64) float64 {
 
 	p := trueProb
 	q := 1.0 - p
-	b := (1.0 - kalshiPrice) / kalshiPrice // decimal odds minus 1
+	fee := kalshi.TakerFee(kalshiPrice)
+	effectiveStake := kalshiPrice + fee
+	effectiveProfit := 1.0 - kalshiPrice - fee
+	if effectiveProfit <= 0 {
+		return 0
+	}
+	bNet := effectiveProfit / effectiveStake
 
-	kelly := (p*b - q) / b
+	kelly := (p*bNet - q) / bNet
 
 	// Cap at reasonable maximum and floor at 0
 	kelly = math.Max(0, kelly)
@@ -56,17 +62,27 @@ func OptimalBetSize(bankroll, kellyFraction float64) float64 {
 	return bankroll * kellyFraction
 }
 
-// KellyWithEdge calculates Kelly when you know the edge directly
+// KellyWithEdge calculates Kelly when you know the edge directly.
+// Uses impliedProb as price proxy for fee adjustment.
 // edge = (trueProb - impliedProb) / impliedProb = EV / stake
 func KellyWithEdge(edge, impliedProb, fraction float64) float64 {
 	if impliedProb <= 0 || impliedProb >= 1 {
 		return 0
 	}
 
-	// Convert edge to Kelly
-	// Kelly = edge / (1/impliedProb - 1)
-	b := (1.0 - impliedProb) / impliedProb
-	kelly := edge / b
+	// Fee-adjust the odds using impliedProb as price proxy
+	fee := kalshi.TakerFee(impliedProb)
+	effectiveStake := impliedProb + fee
+	effectiveProfit := 1.0 - impliedProb - fee
+	if effectiveProfit <= 0 {
+		return 0
+	}
+	bNet := effectiveProfit / effectiveStake
+
+	// Derive trueProb from edge: edge = (trueProb - impliedProb) / impliedProb
+	trueProb := impliedProb * (1 + edge)
+	q := 1.0 - trueProb
+	kelly := (trueProb*bNet - q) / bNet
 
 	kelly = math.Max(0, kelly)
 	kelly = math.Min(kelly, 1.0)
@@ -107,13 +123,6 @@ func CalculateKellyContracts(trueProb, kalshiPrice, fraction, bankrollDollars, m
 	contracts := int(betSizeCents / float64(priceInCents))
 
 	return contracts
-}
-
-// AdjustKellyForSlippage recalculates Kelly using the actual fill price
-// instead of the best available price, to account for market impact
-func AdjustKellyForSlippage(trueProb, bestPrice, actualFillPrice, fraction float64) float64 {
-	// Use the actual fill price instead of best price
-	return CalculateKelly(trueProb, actualFillPrice, fraction)
 }
 
 // RecalculateEVWithSlippage computes new EV given actual fill price

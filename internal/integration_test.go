@@ -361,26 +361,28 @@ func TestKellyAccuracy(t *testing.T) {
 			trueProb:    0.55,
 			kalshiPrice: 0.50,
 			fraction:    1.0,
-			// b = 0.50/0.50 = 1.0
-			// Kelly = (0.55 * 1.0 - 0.45) / 1.0 = 0.10
-			expectedKelly: 0.10,
+			// fee = 0.07 * 0.50 * 0.50 = 0.0175
+			// bNet = (1 - 0.50 - 0.0175) / (0.50 + 0.0175) = 0.4825 / 0.5175 ≈ 0.9324
+			// Kelly = (0.55 * 0.9324 - 0.45) / 0.9324 ≈ 0.0674
+			expectedKelly: 0.0674,
 		},
 		{
 			name:        "Quarter Kelly",
 			trueProb:    0.55,
 			kalshiPrice: 0.50,
 			fraction:    0.25,
-			// Full Kelly = 0.10, Quarter = 0.025
-			expectedKelly: 0.025,
+			// Full Kelly ≈ 0.0674, Quarter ≈ 0.0168
+			expectedKelly: 0.0168,
 		},
 		{
 			name:        "Big edge on longshot",
 			trueProb:    0.30,
 			kalshiPrice: 0.20,
 			fraction:    1.0,
-			// b = 0.80/0.20 = 4.0
-			// Kelly = (0.30 * 4.0 - 0.70) / 4.0 = (1.2 - 0.7) / 4 = 0.125
-			expectedKelly: 0.125,
+			// fee = 0.07 * 0.20 * 0.80 = 0.0112
+			// bNet = (1 - 0.20 - 0.0112) / (0.20 + 0.0112) = 0.7888 / 0.2112 ≈ 3.7348
+			// Kelly = (0.30 * 3.7348 - 0.70) / 3.7348 ≈ 0.1126
+			expectedKelly: 0.1126,
 		},
 	}
 

@@ -2,6 +2,7 @@ package kalshi
 
 import (
 	"fmt"
+	"sync"
 )
 
 // ArbOpportunity represents a guaranteed profit arbitrage opportunity
@@ -278,28 +279,46 @@ func CalculateArbProfit(yesPriceCents, noPriceCents, contracts int) float64 {
 	return returns - totalCost - yesFees - noFees
 }
 
-// ExecuteArb executes an arbitrage opportunity by buying both sides
+// ExecuteArb executes an arbitrage opportunity by buying both sides concurrently.
+// Both legs are launched in parallel to minimize the window for price movement.
 func (c *KalshiClient) ExecuteArb(arb *ArbOpportunity, contracts int, config OrderConfig) (*ExecutionResult, *ExecutionResult, error) {
 	if contracts > arb.MaxContracts {
 		contracts = arb.MaxContracts
 	}
 
-	// Execute YES leg
-	yesResult, err := c.PlaceOrder(arb.Ticker, SideYes, ActionBuy, contracts, config)
-	if err != nil {
-		return nil, nil, fmt.Errorf("executing YES leg: %w", err)
+	var (
+		yesResult *ExecutionResult
+		noResult  *ExecutionResult
+		yesErr    error
+		noErr     error
+		wg        sync.WaitGroup
+	)
+
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+		yesResult, yesErr = c.PlaceOrder(arb.Ticker, SideYes, ActionBuy, contracts, config)
+	}()
+
+	go func() {
+		defer wg.Done()
+		noResult, noErr = c.PlaceOrder(arb.Ticker, SideNo, ActionBuy, contracts, config)
+	}()
+
+	wg.Wait()
+
+	// Both legs failed
+	if yesErr != nil && noErr != nil {
+		return nil, nil, fmt.Errorf("both arb legs failed: YES: %w, NO: %v", yesErr, noErr)
 	}
 
-	if !yesResult.Success || yesResult.FilledContracts == 0 {
-		return yesResult, nil, nil
+	// One leg failed — caller handles partial fill
+	if yesErr != nil {
+		return nil, noResult, fmt.Errorf("YES leg failed (NO filled %d): %w", noResult.FilledContracts, yesErr)
 	}
-
-	// Execute NO leg with matched size
-	noContracts := yesResult.FilledContracts
-	noResult, err := c.PlaceOrder(arb.Ticker, SideNo, ActionBuy, noContracts, config)
-	if err != nil {
-		// YES leg executed but NO leg failed - we have a position now
-		return yesResult, nil, fmt.Errorf("YES filled %d but NO leg failed: %w", yesResult.FilledContracts, err)
+	if noErr != nil {
+		return yesResult, nil, fmt.Errorf("NO leg failed (YES filled %d): %w", yesResult.FilledContracts, noErr)
 	}
 
 	return yesResult, noResult, nil

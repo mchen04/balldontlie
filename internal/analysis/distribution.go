@@ -249,14 +249,14 @@ func PropDistributionType(propType string) string {
 func DefaultStdDev(propType string, inferredMean float64) float64 {
 	switch propType {
 	case "points":
-		// NBA scoring SD is typically 25-35% of mean
-		// Higher scorers have higher variance
+		// NBA scoring SD is typically 30-40% of mean
+		// Higher scorers have slightly lower relative variance
 		if inferredMean > 25 {
-			return inferredMean * 0.32
+			return inferredMean * 0.38
 		} else if inferredMean > 15 {
-			return inferredMean * 0.30
+			return inferredMean * 0.35
 		}
-		return inferredMean * 0.35
+		return inferredMean * 0.40
 	default:
 		// For other props, SD ≈ sqrt(mean) for Poisson-like data
 		return math.Sqrt(inferredMean)

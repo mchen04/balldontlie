@@ -223,3 +223,61 @@ func TestConsensusWithDifferentLines(t *testing.T) {
 		t.Errorf("Spread probs should sum to 1.0, got %.3f", sum)
 	}
 }
+
+func TestConsensusSharpBookWeighting(t *testing.T) {
+	// Pinnacle (sharp, weight=3) says home is strong favorite
+	// SoftBook (soft, weight=1) disagrees
+	// Consensus should be dominated by Pinnacle
+	game := api.GameOdds{
+		GameID: 100,
+		Game: api.Game{
+			HomeTeam:    api.Team{Abbreviation: "LAL"},
+			VisitorTeam: api.Team{Abbreviation: "BOS"},
+		},
+		Vendors: []api.Vendor{
+			{
+				Name:      "Pinnacle", // Sharp book → weight 3
+				Moneyline: &api.Moneyline{Home: -200, Away: 170},
+			},
+			{
+				Name:      "SoftBook", // Soft book → weight 1
+				Moneyline: &api.Moneyline{Home: -120, Away: 100},
+			},
+			{
+				Name:      "Kalshi",
+				Moneyline: &api.Moneyline{Home: -150, Away: 130},
+			},
+		},
+	}
+
+	consensus := CalculateConsensus(game)
+	if consensus.Moneyline == nil {
+		t.Fatal("Expected moneyline consensus")
+	}
+
+	// Pinnacle home prob is ~65%, SoftBook home prob is ~54%
+	// With equal weighting: avg ≈ 59.5%
+	// With sharp weighting (3:1): weighted avg ≈ (3*65 + 1*54) / 4 ≈ 62.25%
+	// Consensus should be closer to Pinnacle's view
+	pinnacleHomeProb := 0.65 // approximate
+	softBookHomeProb := 0.54 // approximate
+	equalAvg := (pinnacleHomeProb + softBookHomeProb) / 2
+	weightedAvg := (3*pinnacleHomeProb + softBookHomeProb) / 4
+
+	t.Logf("Consensus home: %.3f, equal avg: %.3f, weighted avg: %.3f",
+		consensus.Moneyline.HomeTrueProb, equalAvg, weightedAvg)
+
+	// Consensus should be closer to weighted avg than equal avg
+	distToWeighted := math.Abs(consensus.Moneyline.HomeTrueProb - weightedAvg)
+	distToEqual := math.Abs(consensus.Moneyline.HomeTrueProb - equalAvg)
+
+	if distToWeighted >= distToEqual {
+		t.Errorf("Expected consensus (%.3f) to be closer to weighted avg (%.3f) than equal avg (%.3f)",
+			consensus.Moneyline.HomeTrueProb, weightedAvg, equalAvg)
+	}
+
+	// BookCount should still be raw count (2 books, not weighted)
+	if consensus.Moneyline.BookCount != 2 {
+		t.Errorf("Expected BookCount=2, got %d", consensus.Moneyline.BookCount)
+	}
+}

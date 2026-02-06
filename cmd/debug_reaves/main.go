@@ -225,15 +225,15 @@ func main() {
 		bdlProb := p.OverProb
 
 		// Step 1: Estimate standard deviation (varies by line)
-		// DefaultStdDev: >25 → 32%, >15 → 30%, else → 35%
+		// DefaultStdDev: >25 → 38%, >15 → 35%, else → 40%
 		var estimatedSD float64
 		var sdPct float64
 		if bdlLine > 25 {
-			sdPct = 0.32
+			sdPct = 0.38
 		} else if bdlLine > 15 {
-			sdPct = 0.30
-		} else {
 			sdPct = 0.35
+		} else {
+			sdPct = 0.40
 		}
 		estimatedSD = bdlLine * sdPct
 		fmt.Printf("From BDL line %.1f (%.2f%% over, %d books):\n", bdlLine, bdlProb*100, p.Books)
@@ -272,7 +272,7 @@ func main() {
 		}
 		bdlLine := p.Line
 		bdlProb := p.OverProb
-		estimatedSD := bdlLine * 0.30
+		estimatedSD := bdlLine * 0.35
 		bdlThreshold := int(bdlLine) + 1
 		z := inverseNormalCDF(1 - bdlProb)
 		mean := (float64(bdlThreshold) - 0.5) - estimatedSD*z
