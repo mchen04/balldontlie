@@ -288,8 +288,8 @@ func TestPropTypeFromBallDontLie(t *testing.T) {
 		{"rebounds", PropRebounds},
 		{"assists", PropAssists},
 		{"threes", PropThrees},
-		{"blocks", ""},         // Not supported on Kalshi
-		{"steals", ""},         // Not supported on Kalshi
+		{"blocks", PropBlocks},
+		{"steals", PropSteals},
 		{"double_double", ""},  // Not supported on Kalshi
 		{"triple_double", ""},  // Not supported on Kalshi
 	}
@@ -305,8 +305,8 @@ func TestPropTypeFromBallDontLie(t *testing.T) {
 }
 
 func TestIsKalshiSupportedProp(t *testing.T) {
-	supported := []string{"points", "rebounds", "assists", "threes"}
-	unsupported := []string{"blocks", "steals", "double_double", "triple_double", "points_rebounds", ""}
+	supported := []string{"points", "rebounds", "assists", "threes", "steals", "blocks"}
+	unsupported := []string{"double_double", "triple_double", "points_rebounds", ""}
 
 	for _, prop := range supported {
 		if !IsKalshiSupportedProp(prop) {
@@ -342,8 +342,8 @@ func TestGetAllGameSeries(t *testing.T) {
 
 func TestGetAllPlayerPropSeries(t *testing.T) {
 	series := GetAllPlayerPropSeries()
-	if len(series) != 4 {
-		t.Errorf("GetAllPlayerPropSeries() returned %d series, want 4", len(series))
+	if len(series) != 6 {
+		t.Errorf("GetAllPlayerPropSeries() returned %d series, want 6", len(series))
 	}
 
 	expected := map[KalshiSeries]bool{
@@ -351,6 +351,8 @@ func TestGetAllPlayerPropSeries(t *testing.T) {
 		SeriesPlayerRebounds: true,
 		SeriesPlayerAssists:  true,
 		SeriesPlayerThrees:   true,
+		SeriesPlayerSteals:   true,
+		SeriesPlayerBlocks:   true,
 	}
 
 	for _, s := range series {

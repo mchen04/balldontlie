@@ -550,6 +550,8 @@ var KalshiSupportedPropTypes = []string{
 	"rebounds",
 	"assists",
 	"threes",
+	"steals",
+	"blocks",
 }
 
 // IsKalshiSupportedPropType returns true if the prop type is available on Kalshi

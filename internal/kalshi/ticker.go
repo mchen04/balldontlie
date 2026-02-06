@@ -21,6 +21,8 @@ const (
 	SeriesPlayerRebounds KalshiSeries = "KXNBAREB" // Player rebounds
 	SeriesPlayerAssists  KalshiSeries = "KXNBAAST" // Player assists
 	SeriesPlayerThrees   KalshiSeries = "KXNBA3PT" // Player three-pointers made
+	SeriesPlayerSteals   KalshiSeries = "KXNBASTL" // Player steals
+	SeriesPlayerBlocks   KalshiSeries = "KXNBABLK" // Player blocks
 
 	// Futures markets
 	SeriesChampionship     KalshiSeries = "KXNBA"       // NBA Championship
@@ -45,6 +47,8 @@ const (
 	PropRebounds PropType = "rebounds"
 	PropAssists  PropType = "assists"
 	PropThrees   PropType = "threes"
+	PropSteals   PropType = "steals"
+	PropBlocks   PropType = "blocks"
 )
 
 // MarketType represents the type of game market
@@ -122,6 +126,10 @@ func GetSeriesForPropType(propType PropType) KalshiSeries {
 		return SeriesPlayerAssists
 	case PropThrees:
 		return SeriesPlayerThrees
+	case PropSteals:
+		return SeriesPlayerSteals
+	case PropBlocks:
+		return SeriesPlayerBlocks
 	default:
 		return ""
 	}
@@ -140,8 +148,11 @@ func PropTypeFromBallDontLie(bdlType string) PropType {
 		return PropAssists
 	case "threes":
 		return PropThrees
+	case "steals":
+		return PropSteals
+	case "blocks":
+		return PropBlocks
 	default:
-		// Kalshi only supports points, rebounds, assists, threes
 		return ""
 	}
 }
@@ -167,6 +178,8 @@ func GetAllPlayerPropSeries() []KalshiSeries {
 		SeriesPlayerRebounds,
 		SeriesPlayerAssists,
 		SeriesPlayerThrees,
+		SeriesPlayerSteals,
+		SeriesPlayerBlocks,
 	}
 }
 

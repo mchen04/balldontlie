@@ -15,6 +15,8 @@ const (
 	PropTypeRebounds = "rebounds"
 	PropTypeAssists  = "assists"
 	PropTypeThrees   = "threes"
+	PropTypeSteals   = "steals"
+	PropTypeBlocks   = "blocks"
 )
 
 // Series tickers for each prop type
@@ -23,6 +25,8 @@ var propSeriesTickers = map[string]string{
 	PropTypeRebounds: "KXNBAREB",
 	PropTypeAssists:  "KXNBAAST",
 	PropTypeThrees:   "KXNBA3PT",
+	PropTypeSteals:   "KXNBASTL",
+	PropTypeBlocks:   "KXNBABLK",
 }
 
 // playerNicknames maps common nicknames/variations to canonical names
