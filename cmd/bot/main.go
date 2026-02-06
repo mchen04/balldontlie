@@ -23,6 +23,8 @@ import (
 	"sports-betting-bot/internal/positions"
 )
 
+var lastMaintenanceLog time.Time
+
 type Config struct {
 	APIKey        string
 	EVThreshold   float64
@@ -191,14 +193,13 @@ func main() {
 			kalshiClient, err = kalshi.NewKalshiClient(cfg.KalshiAPIKeyID, cfg.KalshiAPIKeyPath, cfg.KalshiDemo)
 		}
 		if err != nil {
-			log.Printf("Warning: Could not initialize Kalshi client: %v", err)
-			log.Println("Kalshi integration will be disabled")
+			log.Printf("Kalshi disabled: %v", err)
 		} else {
 			mode := "production"
 			if cfg.KalshiDemo {
 				mode = "demo"
 			}
-			log.Printf("Kalshi client initialized (%s mode)", mode)
+			log.Printf("Kalshi initialized (%s)", mode)
 		}
 	}
 
@@ -206,7 +207,7 @@ func main() {
 	if kalshiClient != nil {
 		balance, err := kalshiClient.GetBalanceDollars()
 		if err != nil {
-			log.Printf("Warning: Could not fetch Kalshi balance: %v", err)
+			log.Printf("Kalshi balance error: %v", err)
 		} else {
 			log.Printf("Kalshi balance: $%.2f", balance)
 		}
@@ -222,8 +223,7 @@ func main() {
 	// Initialize database
 	db, err := positions.NewDB(cfg.DBPath)
 	if err != nil {
-		log.Printf("Warning: Could not open positions database: %v", err)
-		log.Println("Position tracking will be disabled")
+		log.Printf("DB disabled: %v", err)
 		db = nil
 	} else {
 		defer db.Close()
@@ -241,17 +241,8 @@ func main() {
 	}
 
 	// Log startup
-	notifier.LogStartup(fmt.Sprintf(`
-EV Threshold:      %.1f%%
-Kalshi Fee:        %.2f%%
-Kelly Fraction:    %.0f%%
-Poll Interval:     %s
-Database:          %s
-Execution Mode:    %s
-Max Slippage:      %.1f%%
-Min Liquidity:     %d contracts
-Max Bet:           %s
-`, cfg.EVThreshold*100, cfg.KalshiFee*100, cfg.KellyFraction*100, cfg.PollInterval, cfg.DBPath,
+	notifier.LogStartup(fmt.Sprintf(" ev=%.1f%% fee=%.2f%% kelly=%.0f%% poll=%s db=%s mode=%s slippage=%.1f%% minLiq=%d maxBet=%s",
+		cfg.EVThreshold*100, cfg.KalshiFee*100, cfg.KellyFraction*100, cfg.PollInterval, cfg.DBPath,
 		execMode, cfg.MaxSlippagePct*100, cfg.MinLiquidityContracts, formatMaxBet(cfg.MaxBetDollars)))
 
 	// Start health check server
@@ -331,7 +322,10 @@ func scanForOpportunities(
 	if kalshiClient != nil {
 		// Check for maintenance window first (Thursday 3-5 AM ET)
 		if kalshi.IsMaintenanceWindowNow() {
-			log.Println("Kalshi maintenance window (Thu 3-5am ET) - skipping execution")
+			if time.Since(lastMaintenanceLog) > 10*time.Minute {
+				log.Println("Kalshi maintenance window (Thu 3-5am ET) - skipping execution")
+				lastMaintenanceLog = time.Now()
+			}
 		} else {
 			bankroll, err = kalshiClient.GetBalanceDollars()
 			if err != nil {
@@ -348,10 +342,15 @@ func scanForOpportunities(
 	var allPropOpps []analysis.PlayerPropOpportunity
 
 	// Fetch Kalshi player props once for all games (more efficient)
+	// Use ET since NBA schedule and Kalshi tickers use Eastern Time dates
 	var kalshiPlayerProps map[string][]kalshi.PlayerPropMarket
 	if kalshiClient != nil {
-		var err error
-		kalshiPlayerProps, err = kalshiClient.GetPlayerPropMarkets(time.Now())
+		et, err := time.LoadLocation("America/New_York")
+		if err != nil {
+			et = time.FixedZone("ET", -5*60*60)
+		}
+		nowET := time.Now().In(et)
+		kalshiPlayerProps, err = kalshiClient.GetPlayerPropMarkets(nowET)
 		if err != nil {
 			notifier.LogError("fetching Kalshi player props", err)
 		}
@@ -463,7 +462,7 @@ func executeOpportunity(
 	// Convert opportunity to Kalshi market ticker
 	ticker := mapToKalshiTicker(opp)
 	if ticker == "" {
-		log.Printf("Could not map game %d to Kalshi ticker", opp.GameID)
+		log.Printf("ERROR no ticker for game %d", opp.GameID)
 		return 0
 	}
 
@@ -478,9 +477,8 @@ func executeOpportunity(
 	if db != nil {
 		hasPosition, err := db.HasPositionOnTicker(ticker, betSide)
 		if err != nil {
-			log.Printf("Error checking position in DB for %s: %v", ticker, err)
+			log.Printf("ERROR checking DB for %s: %v", ticker, err)
 		} else if hasPosition {
-			log.Printf("Skipping %s %s: already have position in database", ticker, betSide)
 			return 0
 		}
 	}
@@ -494,19 +492,18 @@ func executeOpportunity(
 
 	canAdd, isArb, arbOpp, err := kalshiClient.CheckCanAddToPosition(ticker, side, arbConfig)
 	if err != nil {
-		log.Printf("Failed to check existing position for %s: %v", ticker, err)
+		log.Printf("ERROR checking position for %s: %v", ticker, err)
 		return 0
 	}
 
 	if !canAdd {
-		log.Printf("Skipping %s %s: already have position on this market (no arb available)", ticker, side)
 		return 0
 	}
 
 	// If this is an arb opportunity, execute the arb instead of the +EV trade
 	var spent float64
 	if isArb && arbOpp != nil {
-		log.Printf("ARB DETECTED on %s: %s", ticker, arbOpp.Description)
+		log.Printf("ARB DETECTED: %s | %s", ticker, arbOpp.Description)
 		spent = executeArbitrage(kalshiClient, arbOpp, bankroll, execConfig, cfg, notifier, db, opp, ticker, betSide)
 	} else {
 		// Normal +EV execution flow
@@ -562,32 +559,25 @@ func executeArbitrage(
 		}
 		id, err := db.AddPosition(pos)
 		if err != nil {
-			log.Printf("Failed to store arb position: %v", err)
+			log.Printf("ERROR storing arb position: %v", err)
 		} else {
-			log.Printf("Stored arb position ID %d: %s %s", id, ticker, betSide)
+			log.Printf("Stored arb pos #%d: %s %s", id, ticker, betSide)
 		}
 	}
 
 	if execConfig.DryRun {
 		profit := kalshi.CalculateArbProfit(arb.YesPrice, arb.NoPrice, contracts, cfg.KalshiFee)
-		log.Printf("DRY RUN ARB: Would buy %d contracts YES@%d¢ + NO@%d¢. Guaranteed profit: $%.2f",
+		log.Printf("DRY RUN ARB: %d contracts YES@%d¢+NO@%d¢ profit=$%.2f",
 			contracts, arb.YesPrice, arb.NoPrice, profit/100)
-		return 0 // Dry run doesn't spend money
-	}
-
-	log.Printf("Executing ARB: %s %d contracts (YES@%d¢ + NO@%d¢)", arb.Ticker, contracts, arb.YesPrice, arb.NoPrice)
-
-	yesResult, noResult, err := kalshiClient.ExecuteArb(arb, contracts, execConfig)
-	if err != nil {
-		log.Printf("Arb execution error: %v", err)
 		return 0
 	}
 
-	if yesResult != nil && yesResult.Success {
-		log.Printf("ARB YES LEG: filled %d @ %.0f¢", yesResult.FilledContracts, yesResult.AveragePrice)
-	}
-	if noResult != nil && noResult.Success {
-		log.Printf("ARB NO LEG: filled %d @ %.0f¢", noResult.FilledContracts, noResult.AveragePrice)
+	log.Printf("EXEC ARB: %s %d contracts YES@%d¢+NO@%d¢", arb.Ticker, contracts, arb.YesPrice, arb.NoPrice)
+
+	yesResult, noResult, err := kalshiClient.ExecuteArb(arb, contracts, execConfig)
+	if err != nil {
+		log.Printf("ERROR arb exec: %v", err)
+		return 0
 	}
 
 	// Calculate actual profit and total cost
@@ -607,7 +597,8 @@ func executeArbitrage(
 			matchedContracts,
 			cfg.KalshiFee,
 		)
-		log.Printf("ARB COMPLETE: %d matched contracts. Guaranteed profit: $%.2f", matchedContracts, profit/100)
+		log.Printf("ARB FILLED: %d matched, YES@%.0f¢ NO@%.0f¢, profit=$%.2f",
+			matchedContracts, yesResult.AveragePrice, noResult.AveragePrice, profit/100)
 	}
 
 	return totalSpent
@@ -639,26 +630,19 @@ func executeNormalTrade(
 	)
 
 	if contracts < execConfig.MinLiquidityContracts {
-		log.Printf("Kelly bet size (%d contracts) below minimum, skipping", contracts)
 		return 0
 	}
 
 	// Fetch order book and check liquidity/slippage
 	book, err := kalshiClient.GetOrderBook(ticker)
 	if err != nil {
-		log.Printf("Failed to fetch order book for %s: %v", ticker, err)
+		log.Printf("ERROR orderbook %s: %v", ticker, err)
 		return 0
 	}
 
 	// Calculate slippage
 	slippage := kalshiClient.CalculateSlippage(book, side, kalshi.ActionBuy, contracts)
 	if !slippage.Acceptable {
-		if slippage.FillableContracts == 0 {
-			log.Printf("No liquidity in order book for game %s, skipping", ticker)
-		} else {
-			log.Printf("Slippage %.2f%% exceeds max %.2f%% for %s, skipping",
-				slippage.SlippagePct*100, execConfig.MaxSlippagePct*100, ticker)
-		}
 		return 0
 	}
 
@@ -667,13 +651,11 @@ func executeNormalTrade(
 	_, adjustedEV := analysis.RecalculateEVWithSlippage(opp.TrueProb, actualFillPrice, cfg.KalshiFee)
 
 	if adjustedEV < cfg.EVThreshold {
-		log.Printf("EV degraded from %.2f%% to %.2f%% due to slippage, skipping %s",
-			opp.AdjustedEV*100, adjustedEV*100, ticker)
+		log.Printf("EV degraded %.2f%%->%.2f%% after slippage, skip %s", opp.AdjustedEV*100, adjustedEV*100, ticker)
 		return 0
 	}
 
-	// Log execution attempt
-	log.Printf("Executing: %s %s %d contracts @ %.0f¢ (EV: %.2f%%, Kelly: %.1f%%)",
+	log.Printf("EXEC: %s %s %d@%.0f¢ ev=%.2f%% kelly=%.1f%%",
 		ticker, side, contracts, slippage.AverageFillPrice, adjustedEV*100, opp.KellyStake*100)
 
 	// Store position in database BEFORE placing order (for duplicate prevention in dry-run and live)
@@ -691,9 +673,9 @@ func executeNormalTrade(
 		}
 		id, err := db.AddPosition(pos)
 		if err != nil {
-			log.Printf("Failed to store position: %v", err)
+			log.Printf("ERROR storing position: %v", err)
 		} else {
-			log.Printf("Stored position ID %d: %s %s", id, ticker, betSide)
+			log.Printf("Stored pos #%d: %s %s", id, ticker, betSide)
 		}
 	}
 
@@ -703,21 +685,20 @@ func executeNormalTrade(
 	execConfigWithEV.EVThreshold = cfg.EVThreshold
 	execConfigWithEV.FeePct = cfg.KalshiFee
 
-	// Place the order
 	result, err := kalshiClient.PlaceOrder(ticker, side, kalshi.ActionBuy, contracts, execConfigWithEV)
 	if err != nil {
-		log.Printf("Order placement error: %v", err)
+		log.Printf("ERROR order %s: %v", ticker, err)
 		return 0
 	}
 
 	if result.Success {
-		log.Printf("ORDER FILLED: %s %d/%d contracts @ %.0f¢ avg, total cost $%.2f",
+		log.Printf("FILLED: %s %d/%d@%.0f¢ cost=$%.2f",
 			result.OrderID, result.FilledContracts, result.RequestedContracts,
 			result.AveragePrice, float64(result.TotalCost)/100)
 		return float64(result.TotalCost) / 100
 	}
 
-	log.Printf("Order rejected: %s", result.RejectionReason)
+	log.Printf("REJECTED: %s | %s", ticker, result.RejectionReason)
 	return 0
 }
 
@@ -735,7 +716,7 @@ func executePlayerPropOpportunity(
 	// Use the full Kalshi ticker from the opportunity
 	ticker := opp.KalshiTicker
 	if ticker == "" {
-		log.Printf("No Kalshi ticker for player prop: %s %s", opp.PlayerName, opp.PropType)
+		log.Printf("ERROR no ticker for prop: %s %s", opp.PlayerName, opp.PropType)
 		return 0
 	}
 
@@ -750,9 +731,8 @@ func executePlayerPropOpportunity(
 	if db != nil {
 		hasPosition, err := db.HasPositionOnTicker(ticker, betSide)
 		if err != nil {
-			log.Printf("Error checking position in DB for prop %s: %v", ticker, err)
+			log.Printf("ERROR checking DB for prop %s: %v", ticker, err)
 		} else if hasPosition {
-			log.Printf("Skipping prop %s %s: already have position in database", ticker, betSide)
 			return 0
 		}
 	}
@@ -766,12 +746,11 @@ func executePlayerPropOpportunity(
 
 	canAdd, _, _, err := kalshiClient.CheckCanAddToPosition(ticker, side, arbConfig)
 	if err != nil {
-		log.Printf("Failed to check existing position for prop %s: %v", ticker, err)
+		log.Printf("ERROR checking position for prop %s: %v", ticker, err)
 		return 0
 	}
 
 	if !canAdd {
-		log.Printf("Skipping prop %s %s: already have position on this market", ticker, side)
 		return 0
 	}
 
@@ -787,26 +766,19 @@ func executePlayerPropOpportunity(
 	)
 
 	if contracts < execConfig.MinLiquidityContracts {
-		log.Printf("Kelly bet size (%d contracts) below minimum for prop, skipping", contracts)
 		return 0
 	}
 
 	// Fetch order book and check liquidity/slippage
 	book, err := kalshiClient.GetOrderBook(ticker)
 	if err != nil {
-		log.Printf("Failed to fetch order book for prop %s: %v", ticker, err)
+		log.Printf("ERROR orderbook prop %s: %v", ticker, err)
 		return 0
 	}
 
 	// Calculate slippage
 	slippage := kalshiClient.CalculateSlippage(book, side, kalshi.ActionBuy, contracts)
 	if !slippage.Acceptable {
-		if slippage.FillableContracts == 0 {
-			log.Printf("No liquidity in order book for prop %s, skipping", ticker)
-		} else {
-			log.Printf("Slippage %.2f%% exceeds max %.2f%% for prop %s, skipping",
-				slippage.SlippagePct*100, execConfig.MaxSlippagePct*100, ticker)
-		}
 		return 0
 	}
 
@@ -815,14 +787,12 @@ func executePlayerPropOpportunity(
 	_, adjustedEV := analysis.RecalculateEVWithSlippage(opp.TrueProb, actualFillPrice, cfg.KalshiFee)
 
 	if adjustedEV < cfg.EVThreshold {
-		log.Printf("Prop EV degraded from %.2f%% to %.2f%% due to slippage, skipping %s",
-			opp.AdjustedEV*100, adjustedEV*100, ticker)
+		log.Printf("EV degraded %.2f%%->%.2f%% after slippage, skip prop %s", opp.AdjustedEV*100, adjustedEV*100, ticker)
 		return 0
 	}
 
-	// Log execution attempt
-	log.Printf("Executing prop: %s %s %s %.1f %d contracts @ %.0f¢ (EV: %.2f%%)",
-		opp.PlayerName, opp.Side, opp.PropType, opp.Line, contracts, slippage.AverageFillPrice, adjustedEV*100)
+	log.Printf("EXEC PROP: %s %s %.0f %s %d@%.0f¢ ev=%.2f%%",
+		opp.PlayerName, opp.Side, opp.Line, opp.PropType, contracts, slippage.AverageFillPrice, adjustedEV*100)
 
 	// Store position in database BEFORE placing order (for duplicate prevention in dry-run and live)
 	if db != nil {
@@ -839,9 +809,9 @@ func executePlayerPropOpportunity(
 		}
 		id, err := db.AddPosition(pos)
 		if err != nil {
-			log.Printf("Failed to store prop position: %v", err)
+			log.Printf("ERROR storing prop position: %v", err)
 		} else {
-			log.Printf("Stored prop position ID %d: %s %s", id, ticker, betSide)
+			log.Printf("Stored prop pos #%d: %s %s", id, ticker, betSide)
 		}
 	}
 
@@ -851,21 +821,20 @@ func executePlayerPropOpportunity(
 	execConfigWithEV.EVThreshold = cfg.EVThreshold
 	execConfigWithEV.FeePct = cfg.KalshiFee
 
-	// Place the order
 	result, err := kalshiClient.PlaceOrder(ticker, side, kalshi.ActionBuy, contracts, execConfigWithEV)
 	if err != nil {
-		log.Printf("Prop order placement error: %v", err)
+		log.Printf("ERROR prop order %s: %v", ticker, err)
 		return 0
 	}
 
 	if result.Success {
-		log.Printf("PROP ORDER FILLED: %s %d/%d contracts @ %.0f¢ avg, total cost $%.2f",
+		log.Printf("PROP FILLED: %s %d/%d@%.0f¢ cost=$%.2f",
 			result.OrderID, result.FilledContracts, result.RequestedContracts,
 			result.AveragePrice, float64(result.TotalCost)/100)
 		return float64(result.TotalCost) / 100
 	}
 
-	log.Printf("Prop order rejected: %s", result.RejectionReason)
+	log.Printf("PROP REJECTED: %s | %s", ticker, result.RejectionReason)
 	return 0
 }
 
@@ -884,41 +853,34 @@ func mapToKalshiTicker(opp analysis.Opportunity) string {
 	// Parse game date (expected format: "2006-01-02")
 	gameDate, err := time.Parse("2006-01-02", opp.GameDate)
 	if err != nil {
-		log.Printf("Failed to parse game date %s: %v", opp.GameDate, err)
+		log.Printf("ERROR bad game date %s: %v", opp.GameDate, err)
 		return ""
 	}
 
-	// Build ticker using the kalshi package
 	ticker := kalshi.BuildNBATicker(series, gameDate, opp.AwayTeam, opp.HomeTeam)
 	if ticker == "" {
-		log.Printf("Could not build ticker for %s @ %s on %s", opp.AwayTeam, opp.HomeTeam, opp.GameDate)
+		log.Printf("ERROR build ticker: %s@%s %s", opp.AwayTeam, opp.HomeTeam, opp.GameDate)
 	}
 
 	return ticker
 }
 
 // mapToPlayerPropTicker maps a player prop opportunity to a Kalshi ticker
-// Player prop tickers follow this format:
-// - KXNBAPTS-26FEB03PHIGSW (points props for Philadelphia @ Golden State)
-// - KXNBAREB-26FEB03LALBKN (rebounds props for Lakers @ Nets)
 func mapToPlayerPropTicker(opp analysis.PlayerPropOpportunity) string {
-	// Convert prop type to Kalshi format
 	propType := kalshi.PropTypeFromBallDontLie(opp.PropType)
 	if propType == "" {
 		return ""
 	}
 
-	// Parse game date (expected format: "2006-01-02")
 	gameDate, err := time.Parse("2006-01-02", opp.GameDate)
 	if err != nil {
-		log.Printf("Failed to parse game date %s: %v", opp.GameDate, err)
+		log.Printf("ERROR bad game date %s: %v", opp.GameDate, err)
 		return ""
 	}
 
-	// Build ticker using the kalshi package
 	ticker := kalshi.BuildPlayerPropTicker(propType, gameDate, opp.AwayTeam, opp.HomeTeam)
 	if ticker == "" {
-		log.Printf("Could not build prop ticker for %s %s on %s", opp.PlayerName, opp.PropType, opp.GameDate)
+		log.Printf("ERROR build prop ticker: %s %s %s", opp.PlayerName, opp.PropType, opp.GameDate)
 	}
 
 	return ticker

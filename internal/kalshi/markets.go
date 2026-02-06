@@ -142,7 +142,7 @@ func (c *KalshiClient) GetOpenNBAMarkets() (map[KalshiSeries][]KalshiMarket, err
 	for _, series := range GetAllGameSeries() {
 		markets, err := c.GetMarkets(string(series), MarketStatusOpen, 200)
 		if err != nil {
-			log.Printf("Warning: failed to fetch %s markets: %v", series, err)
+			log.Printf("WARN %s markets: %v", series, err)
 			continue
 		}
 		if len(markets) > 0 {
@@ -161,7 +161,7 @@ func (c *KalshiClient) GetOpenPlayerPropMarkets() (map[KalshiSeries][]KalshiMark
 	for _, series := range GetAllPlayerPropSeries() {
 		markets, err := c.GetMarkets(string(series), MarketStatusOpen, 200)
 		if err != nil {
-			log.Printf("Warning: failed to fetch %s player prop markets: %v", series, err)
+			log.Printf("WARN %s prop markets: %v", series, err)
 			continue
 		}
 		if len(markets) > 0 {

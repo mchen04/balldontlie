@@ -211,7 +211,7 @@ func (c *BallDontLieClient) GetOdds(date time.Time) ([]GameOdds, error) {
 		var err error
 		games, err = c.GetGames(date)
 		if err != nil {
-			log.Printf("Warning: could not fetch game details: %v", err)
+			log.Printf("WARN games fetch: %v", err)
 			games = make(map[int]GameInfo)
 		} else {
 			// Update cache
@@ -335,8 +335,15 @@ func groupOddsByGame(records []OddsRecordV2, games map[int]GameInfo) []GameOdds 
 }
 
 // GetTodaysOdds fetches odds for today's NBA games
+// Uses Eastern Time since the NBA schedule and BallDontLie API use ET dates
 func (c *BallDontLieClient) GetTodaysOdds() ([]GameOdds, error) {
-	return c.GetOdds(time.Now())
+	et, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		// Fallback to UTC-5 if timezone database unavailable
+		et = time.FixedZone("ET", -5*60*60)
+	}
+	now := time.Now().In(et)
+	return c.GetOdds(now)
 }
 
 // IsKalshi checks if a vendor is Kalshi
@@ -440,7 +447,7 @@ func (c *BallDontLieClient) GetPlayerNames(playerIDs []int) map[int]string {
 	for _, id := range playerIDs {
 		name, err := c.GetPlayerName(id)
 		if err != nil {
-			log.Printf("Warning: could not fetch player %d: %v", id, err)
+			log.Printf("WARN player %d: %v", id, err)
 			continue
 		}
 		result[id] = name
@@ -526,7 +533,7 @@ func (c *BallDontLieClient) GetTodaysPlayerProps() (map[int][]PlayerProp, error)
 
 		props, err := c.GetPlayerProps(game.GameID)
 		if err != nil {
-			log.Printf("Warning: failed to fetch player props for game %d: %v", game.GameID, err)
+			log.Printf("WARN props game %d: %v", game.GameID, err)
 			continue
 		}
 		if len(props) > 0 {

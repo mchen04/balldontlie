@@ -52,28 +52,10 @@ func (n *Notifier) AlertOpportunity(opp analysis.Opportunity) {
 		sideDesc = strings.ToUpper(opp.Side)
 	}
 
-	log.Printf(`
-================================================================================
-🎯 +EV OPPORTUNITY FOUND
-================================================================================
-Game:        %s @ %s
-Market:      %s
-Bet:         %s
-True Prob:   %.1f%% (from %d books)
-Kalshi:      $%.2f (implied %.1f%%)
-Raw EV:      %.2f%%
-Adj EV:      %.2f%% (after fees)
-Kelly Stake: %.1f%% of bankroll
-================================================================================
-`,
-		opp.AwayTeam, opp.HomeTeam,
-		opp.MarketType,
-		sideDesc,
+	log.Printf("+EV GAME: %s %s (%s@%s) | prob=%.1f%%/%dbk kalshi=$%.2f ev=%.2f%% kelly=%.1f%%",
+		sideDesc, opp.MarketType, opp.AwayTeam, opp.HomeTeam,
 		opp.TrueProb*100, opp.BookCount,
-		opp.KalshiPrice, opp.KalshiPrice*100,
-		opp.RawEV*100,
-		opp.AdjustedEV*100,
-		opp.KellyStake*100,
+		opp.KalshiPrice, opp.AdjustedEV*100, opp.KellyStake*100,
 	)
 }
 
@@ -92,28 +74,11 @@ func (n *Notifier) AlertPlayerProp(opp analysis.PlayerPropOpportunity) {
 	n.lastAlerts[key] = time.Now()
 	n.mu.Unlock()
 
-	log.Printf(`
-================================================================================
-🎯 +EV PLAYER PROP FOUND
-================================================================================
-Game:        %s @ %s
-Player:      %s
-Prop:        %s %s %.1f
-True Prob:   %.1f%% (from %d books)
-Kalshi:      $%.2f (implied %.1f%%)
-Raw EV:      %.2f%%
-Adj EV:      %.2f%% (after fees)
-Kelly Stake: %.1f%% of bankroll
-================================================================================
-`,
+	log.Printf("+EV PROP: %s %s %.0f %s (%s@%s) | prob=%.1f%%/%dbk kalshi=$%.2f ev=%.2f%% kelly=%.1f%%",
+		opp.PlayerName, strings.ToUpper(opp.Side), opp.Line, opp.PropType,
 		opp.AwayTeam, opp.HomeTeam,
-		opp.PlayerName,
-		strings.ToUpper(opp.Side), opp.PropType, opp.Line,
 		opp.TrueProb*100, opp.BookCount,
-		opp.KalshiPrice, opp.KalshiPrice*100,
-		opp.RawEV*100,
-		opp.AdjustedEV*100,
-		opp.KellyStake*100,
+		opp.KalshiPrice, opp.AdjustedEV*100, opp.KellyStake*100,
 	)
 }
 
@@ -136,20 +101,11 @@ func (n *Notifier) AlertHedge(hedge positions.HedgeOpportunity) {
 		emoji = "💰"
 	}
 
-	log.Printf(`
-================================================================================
-%s HEDGE/ARB ALERT
-================================================================================
-Position:    %s @ %s - %s %s
-Entry:       $%.2f × %d contracts
-Current:     $%.2f
-Action:      %s
-%s
-================================================================================
-`,
+	log.Printf("%s HEDGE: %s %s %s (%s@%s) entry=$%.2f×%d cur=$%.2f action=%s | %s",
 		emoji,
-		hedge.Position.AwayTeam, hedge.Position.HomeTeam,
 		hedge.Position.MarketType, hedge.Position.Side,
+		strings.ToUpper(hedge.Action),
+		hedge.Position.AwayTeam, hedge.Position.HomeTeam,
 		hedge.Position.EntryPrice, hedge.Position.Contracts,
 		hedge.CurrentPrice,
 		strings.ToUpper(hedge.Action),
@@ -157,19 +113,9 @@ Action:      %s
 	)
 }
 
-// LogScan logs a scan completion
-func (n *Notifier) LogScan(gamesScanned int, opportunitiesFound int) {
-	if opportunitiesFound > 0 {
-		log.Printf("Scan complete: %d games, %d opportunities found", gamesScanned, opportunitiesFound)
-	}
-}
-
 // LogScanWithProps logs a scan completion with player props
 func (n *Notifier) LogScanWithProps(gamesScanned, gameOpps, propOpps int) {
-	total := gameOpps + propOpps
-	if total > 0 {
-		log.Printf("Scan complete: %d games, %d game opps, %d prop opps", gamesScanned, gameOpps, propOpps)
-	}
+	log.Printf("Scan complete: %d games, %d game opps, %d prop opps", gamesScanned, gameOpps, propOpps)
 }
 
 // LogError logs an error
@@ -179,13 +125,7 @@ func (n *Notifier) LogError(context string, err error) {
 
 // LogStartup logs bot startup
 func (n *Notifier) LogStartup(config string) {
-	log.Printf(`
-================================================================================
-🏀 Sports Betting Bot Started
-================================================================================
-%s
-================================================================================
-`, config)
+	log.Printf("Bot started |%s", config)
 }
 
 // CleanupOldAlerts removes stale alert records
