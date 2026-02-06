@@ -26,7 +26,6 @@ const (
 	DefaultMinArbProfitCents      = 0.5
 	DefaultMinArbProfitPct        = 0.005
 	DefaultMaxOddsAgeSec          = 1800 // 30 minutes
-	DefaultMaxGameExposurePct     = 0.10 // 10% bankroll per game
 	DefaultTakerFeeCoeff          = 0.07
 	DefaultTakerFeeCap            = 0.0175
 )
@@ -52,7 +51,6 @@ type Config struct {
 	MinLiquidityContracts int
 	MaxBetDollars         float64
 	MaxOddsAgeSec         int     // Max age of vendor odds to include in consensus (0 = no filter)
-	MaxGameExposurePct    float64 // Max Kelly exposure per game (correlated bet protection)
 	TakerFeeCoeff         float64 // Kalshi taker fee coefficient (default 0.07)
 	TakerFeeCap           float64 // Kalshi taker fee cap in dollars (default 0.0175)
 }
@@ -81,7 +79,6 @@ func Load() Config {
 		MinLiquidityContracts: DefaultMinLiquidity,
 		MaxBetDollars:         0, // 0 = no cap
 		MaxOddsAgeSec:         DefaultMaxOddsAgeSec,
-		MaxGameExposurePct:    DefaultMaxGameExposurePct,
 		TakerFeeCoeff:         DefaultTakerFeeCoeff,
 		TakerFeeCap:           DefaultTakerFeeCap,
 	}
@@ -138,12 +135,6 @@ func Load() Config {
 	if v := os.Getenv("MAX_ODDS_AGE_SEC"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			cfg.MaxOddsAgeSec = n
-		}
-	}
-
-	if v := os.Getenv("MAX_GAME_EXPOSURE_PCT"); v != "" {
-		if f, err := strconv.ParseFloat(v, 64); err == nil {
-			cfg.MaxGameExposurePct = f
 		}
 	}
 
