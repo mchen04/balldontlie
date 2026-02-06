@@ -18,9 +18,6 @@ const (
 	// Based on Boyd's Bets O/U margin data (empirical range 15-21)
 	NBATotalStdDev = 17.0
 
-	// Sharp books get 2x weight in consensus averaging
-	sharpWeight = 2.0
-	softWeight  = 1.0
 )
 
 // MarketType represents the type of betting market
@@ -80,14 +77,6 @@ type weightedProb struct {
 	weight float64
 }
 
-// vendorWeight returns sharpWeight for sharp books, softWeight otherwise
-func vendorWeight(name string) float64 {
-	if api.IsSharpBook(name) {
-		return sharpWeight
-	}
-	return softWeight
-}
-
 // isVendorFresh checks if a vendor's odds are within the staleness threshold.
 // Returns true if maxAgeSec is 0 (no filtering) or if the vendor's UpdatedAt
 // is within maxAgeSec of now.
@@ -107,7 +96,7 @@ func isVendorFresh(vendor api.Vendor, maxAgeSec int) bool {
 
 // CalculateConsensus computes consensus true probabilities from multiple vendors
 // Normalizes spread/total probabilities to match Kalshi's line
-// Sharp books (Pinnacle, Circa, etc.) are weighted 2x vs soft books
+// Vendors are weighted per api.VendorGameWeight (e.g. DraftKings 1.5x, BetMGM 0.7x)
 func CalculateConsensus(gameOdds api.GameOdds, maxOddsAgeSec ...int) ConsensusOdds {
 	maxAge := 0
 	if len(maxOddsAgeSec) > 0 {
@@ -158,7 +147,7 @@ func CalculateConsensus(gameOdds api.GameOdds, maxOddsAgeSec ...int) ConsensusOd
 			continue
 		}
 
-		w := vendorWeight(vendor.Name)
+		w := api.VendorGameWeight(vendor.Name)
 
 		// Moneyline (no normalization needed)
 		if vendor.Moneyline != nil && vendor.Moneyline.Home != 0 && vendor.Moneyline.Away != 0 {

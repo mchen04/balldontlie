@@ -219,7 +219,7 @@ f  = f* × 0.25           [quarter-Kelly]
 | **balldontlie.io** | 14+ sportsbook odds | 600 req/min |
 | **Kalshi API** | Prices & execution | 10 write/sec, 100 read/sec |
 
-**Supported Books**: DraftKings, FanDuel, BetMGM, Caesars, Pinnacle, Circa, Kalshi, and more
+**Supported Books**: DraftKings, FanDuel, BetMGM, Caesars, Bet365, BetRivers, Betway, Fanatics, Kalshi, and more
 
 **Markets**: Moneyline, spread, totals, player props
 

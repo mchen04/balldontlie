@@ -182,8 +182,8 @@ func TestConsensusWithDifferentLines(t *testing.T) {
 	}
 }
 
-func TestConsensusSharpWeighting(t *testing.T) {
-	// Sharp books (Pinnacle) should have more influence than soft books
+func TestConsensusVendorWeighting(t *testing.T) {
+	// DraftKings (1.5x) should have more influence than BetMGM (0.7x)
 	game := api.GameOdds{
 		GameID: 100,
 		Game: api.Game{
@@ -192,11 +192,11 @@ func TestConsensusSharpWeighting(t *testing.T) {
 		},
 		Vendors: []api.Vendor{
 			{
-				Name:      "Pinnacle", // Sharp book — weight 2.0
+				Name:      "DraftKings", // weight 1.5
 				Moneyline: &api.Moneyline{Home: -200, Away: 170},
 			},
 			{
-				Name:      "SoftBook", // Soft book — weight 1.0
+				Name:      "BetMGM", // weight 0.7
 				Moneyline: &api.Moneyline{Home: -120, Away: 100},
 			},
 			{
@@ -211,23 +211,23 @@ func TestConsensusSharpWeighting(t *testing.T) {
 		t.Fatal("Expected moneyline consensus")
 	}
 
-	// Pinnacle (sharp, weight=2) home prob is ~65%, SoftBook (soft, weight=1) home prob is ~54%
-	// Weighted avg = (65*2 + 54*1) / (2+1) ≈ 61.3% (closer to Pinnacle than simple avg 59.5%)
-	pinnacleHome, _ := RemoveVigPowerFromAmerican(-200, 170)
-	softBookHome, _ := RemoveVigPowerFromAmerican(-120, 100)
+	// DraftKings (weight=1.5) home prob is ~65%, BetMGM (weight=0.7) home prob is ~54%
+	// Weighted avg = (65*1.5 + 54*0.7) / (1.5+0.7) ≈ closer to DraftKings
+	dkHome, _ := RemoveVigPowerFromAmerican(-200, 170)
+	mgmHome, _ := RemoveVigPowerFromAmerican(-120, 100)
 
-	simpleAvg := (pinnacleHome + softBookHome) / 2
-	weightedAvg := (pinnacleHome*2 + softBookHome*1) / 3
+	simpleAvg := (dkHome + mgmHome) / 2
+	weightedAvg := (dkHome*1.5 + mgmHome*0.7) / (1.5 + 0.7)
 
-	// Consensus should be closer to Pinnacle (weighted) not simple average
+	// Consensus should match weighted average
 	if math.Abs(consensus.Moneyline.HomeTrueProb-weightedAvg) > 0.001 {
 		t.Errorf("Expected weighted consensus %.4f, got %.4f (simple avg would be %.4f)",
 			weightedAvg, consensus.Moneyline.HomeTrueProb, simpleAvg)
 	}
 
-	// Verify consensus is closer to Pinnacle than simple average would be
-	if math.Abs(consensus.Moneyline.HomeTrueProb-pinnacleHome) >= math.Abs(simpleAvg-pinnacleHome) {
-		t.Errorf("Weighted consensus should be closer to Pinnacle than simple avg")
+	// Verify consensus is closer to DraftKings than simple average would be
+	if math.Abs(consensus.Moneyline.HomeTrueProb-dkHome) >= math.Abs(simpleAvg-dkHome) {
+		t.Errorf("Weighted consensus should be closer to DraftKings than simple avg")
 	}
 
 	if consensus.Moneyline.BookCount != 2 {

@@ -51,7 +51,10 @@ func CalculatePlayerPropConsensus(props []api.PlayerProp) *PlayerPropConsensus {
 	// Group by player, prop type, and line
 	first := props[0]
 
-	var overProbs, underProbs []float64
+	type wp struct {
+		over, under, weight float64
+	}
+	var probs []wp
 	var kalshiOverPrice, kalshiUnderPrice float64
 
 	for _, prop := range props {
@@ -76,20 +79,20 @@ func CalculatePlayerPropConsensus(props []api.PlayerProp) *PlayerPropConsensus {
 		// Remove vig for other books using Power method (accounts for FLB bias)
 		overProb, underProb := odds.RemoveVigPowerFromAmerican(prop.Market.OverOdds, prop.Market.UnderOdds)
 		if overProb > 0 && underProb > 0 {
-			overProbs = append(overProbs, overProb)
-			underProbs = append(underProbs, underProb)
+			probs = append(probs, wp{overProb, underProb, api.VendorPropWeight(prop.Vendor)})
 		}
 	}
 
-	if len(overProbs) == 0 {
+	if len(probs) == 0 {
 		return nil
 	}
 
-	// Calculate average true probabilities
-	var overSum, underSum float64
-	for i := range overProbs {
-		overSum += overProbs[i]
-		underSum += underProbs[i]
+	// Calculate weighted average true probabilities
+	var overSum, underSum, wSum float64
+	for _, p := range probs {
+		overSum += p.over * p.weight
+		underSum += p.under * p.weight
+		wSum += p.weight
 	}
 
 	// Player name not included in v2 API, use ID as placeholder
@@ -100,11 +103,11 @@ func CalculatePlayerPropConsensus(props []api.PlayerProp) *PlayerPropConsensus {
 		PlayerName:       playerName,
 		PropType:         first.PropType,
 		Line:             first.Line(),
-		OverTrueProb:     overSum / float64(len(overProbs)),
-		UnderTrueProb:    underSum / float64(len(underProbs)),
+		OverTrueProb:     overSum / wSum,
+		UnderTrueProb:    underSum / wSum,
 		KalshiOverPrice:  kalshiOverPrice,
 		KalshiUnderPrice: kalshiUnderPrice,
-		BookCount:        len(overProbs),
+		BookCount:        len(probs),
 	}
 }
 
@@ -499,7 +502,7 @@ func FindPlayerPropOpportunitiesWithInterpolation(
 }
 
 // calculateBDLConsensus calculates consensus from Ball Don't Lie props only (no Kalshi)
-// Applies sharp book weighting (2x for Pinnacle, Circa, etc.) mirroring game consensus
+// Applies vendor weighting per api.VendorPropWeight (e.g. FanDuel 1.5x, BetMGM 0.7x)
 func calculateBDLConsensus(props []api.PlayerProp) *PlayerPropConsensus {
 	if len(props) == 0 {
 		return nil
@@ -531,11 +534,7 @@ func calculateBDLConsensus(props []api.PlayerProp) *PlayerPropConsensus {
 		// Remove vig using Power method (accounts for FLB bias)
 		overProb, underProb := odds.RemoveVigPowerFromAmerican(prop.Market.OverOdds, prop.Market.UnderOdds)
 		if overProb > 0 && underProb > 0 {
-			w := 1.0
-			if api.IsSharpBook(prop.Vendor) {
-				w = 2.0
-			}
-			probs = append(probs, weightedProb{overProb, underProb, w})
+			probs = append(probs, weightedProb{overProb, underProb, api.VendorPropWeight(prop.Vendor)})
 		}
 	}
 

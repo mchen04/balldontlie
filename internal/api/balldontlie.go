@@ -353,17 +353,38 @@ func IsKalshi(vendorName string) bool {
 	return vendorName == "Kalshi" || vendorName == "kalshi"
 }
 
-// IsSharpBook checks if a vendor is considered a sharp book for consensus
-func IsSharpBook(vendorName string) bool {
-	sharpBooks := map[string]bool{
-		"Pinnacle":    true,
-		"Circa":       true,
-		"BetCRIS":     true,
-		"Bookmaker":   true,
-		"5Dimes":      true,
-		"Heritage":    true,
+// vendorGameWeights maps BDL vendor names to consensus weights for game markets
+// (moneyline, spread, totals). Based on Pikkit 2025 data and Data Golf studies.
+var vendorGameWeights = map[string]float64{
+	"DraftKings": 1.5, // Pikkit: NBA mains #3, MLB mains #4
+	"Bet365":     1.3, // Data Golf Tier 2, best blind betting ROI
+	"BetMGM":     0.7, // Pikkit: consistently last
+}
+
+// vendorPropWeights maps BDL vendor names to consensus weights for player prop markets.
+// Based on Pikkit 2025 data.
+var vendorPropWeights = map[string]float64{
+	"FanDuel":    1.5, // Pikkit: MLB props #1, NBA props #4
+	"DraftKings": 1.2, // Mid-pack for props
+	"BetMGM":     0.7, // Soft
+}
+
+// VendorGameWeight returns the consensus weight for a vendor in game markets.
+// Unlisted vendors default to 1.0.
+func VendorGameWeight(vendorName string) float64 {
+	if w, ok := vendorGameWeights[vendorName]; ok {
+		return w
 	}
-	return sharpBooks[vendorName]
+	return 1.0
+}
+
+// VendorPropWeight returns the consensus weight for a vendor in player prop markets.
+// Unlisted vendors default to 1.0.
+func VendorPropWeight(vendorName string) float64 {
+	if w, ok := vendorPropWeights[vendorName]; ok {
+		return w
+	}
+	return 1.0
 }
 
 // ===============================

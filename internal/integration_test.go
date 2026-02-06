@@ -218,7 +218,7 @@ func TestEdgeCases(t *testing.T) {
 			GameID: 3,
 			Vendors: []api.Vendor{
 				{
-					Name:      "Pinnacle",
+					Name:      "DraftKings",
 					Moneyline: &api.Moneyline{Home: -1000, Away: 700},
 				},
 				{
@@ -470,9 +470,9 @@ func TestOpportunityDetection(t *testing.T) {
 		},
 		Vendors: []api.Vendor{
 			// Consensus says home team is 60% favorite
-			{Name: "Pinnacle", Moneyline: &api.Moneyline{Home: -150, Away: 130}},
-			{Name: "Circa", Moneyline: &api.Moneyline{Home: -148, Away: 128}},
-			{Name: "DraftKings", Moneyline: &api.Moneyline{Home: -152, Away: 132}},
+			{Name: "DraftKings", Moneyline: &api.Moneyline{Home: -150, Away: 130}},  // weight 1.5
+			{Name: "Bet365", Moneyline: &api.Moneyline{Home: -148, Away: 128}},      // weight 1.3
+			{Name: "FanDuel", Moneyline: &api.Moneyline{Home: -152, Away: 132}},     // weight 1.0
 			// But Kalshi prices home at only 50% (major mispricing!)
 			{Name: "Kalshi", Moneyline: &api.Moneyline{Home: -100, Away: -100}},
 		},
@@ -533,28 +533,26 @@ func createMockGameOdds() api.GameOdds {
 			Status:      "scheduled",
 		},
 		Vendors: []api.Vendor{
-			// Sharp books (used for consensus)
 			{
-				Name:      "Pinnacle",
+				Name:      "DraftKings", // weight 1.5
 				Moneyline: &api.Moneyline{Home: -145, Away: 125},
 				Spread:    &api.Spread{HomeSpread: -3.5, HomeOdds: -108, AwaySpread: 3.5, AwayOdds: -112},
 				Total:     &api.Total{Line: 220.5, OverOdds: -105, UnderOdds: -115},
 			},
 			{
-				Name:      "Circa",
+				Name:      "Bet365", // weight 1.3
 				Moneyline: &api.Moneyline{Home: -142, Away: 122},
 				Spread:    &api.Spread{HomeSpread: -3.5, HomeOdds: -110, AwaySpread: 3.5, AwayOdds: -110},
 				Total:     &api.Total{Line: 220.5, OverOdds: -108, UnderOdds: -112},
 			},
-			// Regular books
 			{
-				Name:      "DraftKings",
+				Name:      "FanDuel", // weight 1.0
 				Moneyline: &api.Moneyline{Home: -150, Away: 130},
 				Spread:    &api.Spread{HomeSpread: -3.5, HomeOdds: -110, AwaySpread: 3.5, AwayOdds: -110},
 				Total:     &api.Total{Line: 220.5, OverOdds: -110, UnderOdds: -110},
 			},
 			{
-				Name:      "FanDuel",
+				Name:      "BetMGM", // weight 0.7
 				Moneyline: &api.Moneyline{Home: -148, Away: 126},
 				Spread:    &api.Spread{HomeSpread: -3.5, HomeOdds: -112, AwaySpread: 3.5, AwayOdds: -108},
 				Total:     &api.Total{Line: 220.5, OverOdds: -112, UnderOdds: -108},

@@ -275,13 +275,13 @@ Normalized probability at -6.0: 50.3% (lower, as expected)
 
 ## Consensus Line Building
 
-Multiple sportsbooks are averaged to form a "true probability" consensus. Sharp books (Pinnacle, Circa, BetCRIS, Bookmaker, 5Dimes, Heritage) receive 3x weight versus soft books (1x), since sharp lines are empirically closer to closing lines.
+Multiple sportsbooks are averaged to form a "true probability" consensus. Each vendor has a market-type-aware weight based on empirical closing-line accuracy (Pikkit 2025 data, Data Golf studies).
+
+**Game markets** (moneyline/spread/total): DraftKings 1.5x, Bet365 1.3x, BetMGM 0.7x, others 1.0x.
+**Player props**: FanDuel 1.5x, DraftKings 1.2x, BetMGM 0.7x, others 1.0x.
 
 ```
 weighted_avg = Σ(prob_i × weight_i) / Σ(weight_i)
-
-Sharp book weight: 3.0
-Soft book weight:  1.0
 ```
 
 BookCount remains the raw number of contributing books (not weighted).
