@@ -90,9 +90,9 @@ func CalculateConsensus(gameOdds api.GameOdds) ConsensusOdds {
 		}
 	}
 
-	var mlProbs []struct{ home, away, weight float64 }
-	var spreadProbs []struct{ homeCover, awayCover, weight float64 }
-	var totalProbs []struct{ over, under, weight float64 }
+	var mlProbs []struct{ home, away float64 }
+	var spreadProbs []struct{ homeCover, awayCover float64 }
+	var totalProbs []struct{ over, under float64 }
 
 	// Get Kalshi lines as targets for normalization
 	var kalshiSpreadLine, kalshiTotalLine float64
@@ -111,17 +111,11 @@ func CalculateConsensus(gameOdds api.GameOdds) ConsensusOdds {
 			continue
 		}
 
-		// Sharp books get 3x weight in consensus (Pinnacle, Circa, etc.)
-		w := 1.0
-		if api.IsSharpBook(vendor.Name) {
-			w = 3.0
-		}
-
 		// Moneyline (no normalization needed)
 		if vendor.Moneyline != nil && vendor.Moneyline.Home != 0 && vendor.Moneyline.Away != 0 {
 			homeProb, awayProb := RemoveVigPowerFromAmerican(vendor.Moneyline.Home, vendor.Moneyline.Away)
 			if homeProb > 0 && awayProb > 0 {
-				mlProbs = append(mlProbs, struct{ home, away, weight float64 }{homeProb, awayProb, w})
+				mlProbs = append(mlProbs, struct{ home, away float64 }{homeProb, awayProb})
 			}
 		}
 
@@ -136,7 +130,7 @@ func CalculateConsensus(gameOdds api.GameOdds) ConsensusOdds {
 						vendor.Spread.HomeSpread, kalshiSpreadLine,
 					)
 				}
-				spreadProbs = append(spreadProbs, struct{ homeCover, awayCover, weight float64 }{homeCover, awayCover, w})
+				spreadProbs = append(spreadProbs, struct{ homeCover, awayCover float64 }{homeCover, awayCover})
 			}
 		}
 
@@ -151,52 +145,52 @@ func CalculateConsensus(gameOdds api.GameOdds) ConsensusOdds {
 						vendor.Total.Line, kalshiTotalLine,
 					)
 				}
-				totalProbs = append(totalProbs, struct{ over, under, weight float64 }{overProb, underProb, w})
+				totalProbs = append(totalProbs, struct{ over, under float64 }{overProb, underProb})
 			}
 		}
 	}
 
-	// Calculate weighted averages (sharp books weighted 3x)
+	// Calculate simple averages across all books
 	if len(mlProbs) > 0 {
-		var homeSum, awaySum, weightSum float64
+		var homeSum, awaySum float64
 		for _, p := range mlProbs {
-			homeSum += p.home * p.weight
-			awaySum += p.away * p.weight
-			weightSum += p.weight
+			homeSum += p.home
+			awaySum += p.away
 		}
+		n := float64(len(mlProbs))
 		consensus.Moneyline = &MoneylineConsensus{
-			HomeTrueProb: homeSum / weightSum,
-			AwayTrueProb: awaySum / weightSum,
+			HomeTrueProb: homeSum / n,
+			AwayTrueProb: awaySum / n,
 			BookCount:    len(mlProbs),
 		}
 	}
 
 	if len(spreadProbs) > 0 {
-		var homeCoverSum, awayCoverSum, weightSum float64
+		var homeCoverSum, awayCoverSum float64
 		for _, p := range spreadProbs {
-			homeCoverSum += p.homeCover * p.weight
-			awayCoverSum += p.awayCover * p.weight
-			weightSum += p.weight
+			homeCoverSum += p.homeCover
+			awayCoverSum += p.awayCover
 		}
+		n := float64(len(spreadProbs))
 		consensus.Spread = &SpreadConsensus{
 			HomeSpread:    kalshiSpreadLine, // Use Kalshi line as the reference
-			HomeCoverProb: homeCoverSum / weightSum,
-			AwayCoverProb: awayCoverSum / weightSum,
+			HomeCoverProb: homeCoverSum / n,
+			AwayCoverProb: awayCoverSum / n,
 			BookCount:     len(spreadProbs),
 		}
 	}
 
 	if len(totalProbs) > 0 {
-		var overSum, underSum, weightSum float64
+		var overSum, underSum float64
 		for _, p := range totalProbs {
-			overSum += p.over * p.weight
-			underSum += p.under * p.weight
-			weightSum += p.weight
+			overSum += p.over
+			underSum += p.under
 		}
+		n := float64(len(totalProbs))
 		consensus.Total = &TotalConsensus{
 			Line:      kalshiTotalLine, // Use Kalshi line as the reference
-			OverProb:  overSum / weightSum,
-			UnderProb: underSum / weightSum,
+			OverProb:  overSum / n,
+			UnderProb: underSum / n,
 			BookCount: len(totalProbs),
 		}
 	}

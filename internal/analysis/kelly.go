@@ -118,9 +118,11 @@ func CalculateKellyContracts(trueProb, kalshiPrice, fraction, bankrollDollars, m
 		return 0
 	}
 
-	// Convert bet size to cents, then divide by price per contract
+	// Convert bet size to cents, then divide by total cost per contract (price + fee)
 	betSizeCents := betSize * 100
-	contracts := int(betSizeCents / float64(priceInCents))
+	feeCents := kalshi.TakerFeeCents(priceInCents)
+	costPerContract := float64(priceInCents) + feeCents
+	contracts := int(betSizeCents / costPerContract)
 
 	return contracts
 }
