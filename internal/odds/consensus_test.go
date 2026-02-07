@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"sports-betting-bot/internal/api"
+	"sports-betting-bot/internal/mathutil"
 )
 
 func TestNormalizeSpreadProb(t *testing.T) {
@@ -212,17 +213,19 @@ func TestConsensusVendorWeighting(t *testing.T) {
 	}
 
 	// DraftKings (weight=1.5) home prob is ~65%, BetMGM (weight=0.7) home prob is ~54%
-	// Weighted avg = (65*1.5 + 54*0.7) / (1.5+0.7) ≈ closer to DraftKings
+	// Log-linear avg: sigmoid((logit(dk)*1.5 + logit(mgm)*0.7) / (1.5+0.7))
 	dkHome, _ := RemoveVigPowerFromAmerican(-200, 170)
 	mgmHome, _ := RemoveVigPowerFromAmerican(-120, 100)
 
 	simpleAvg := (dkHome + mgmHome) / 2
-	weightedAvg := (dkHome*1.5 + mgmHome*0.7) / (1.5 + 0.7)
+	logLinearAvg := mathutil.Sigmoid(
+		(mathutil.Logit(dkHome)*1.5 + mathutil.Logit(mgmHome)*0.7) / (1.5 + 0.7),
+	)
 
-	// Consensus should match weighted average
-	if math.Abs(consensus.Moneyline.HomeTrueProb-weightedAvg) > 0.001 {
-		t.Errorf("Expected weighted consensus %.4f, got %.4f (simple avg would be %.4f)",
-			weightedAvg, consensus.Moneyline.HomeTrueProb, simpleAvg)
+	// Consensus should match log-linear weighted average
+	if math.Abs(consensus.Moneyline.HomeTrueProb-logLinearAvg) > 0.001 {
+		t.Errorf("Expected log-linear consensus %.4f, got %.4f (simple avg would be %.4f)",
+			logLinearAvg, consensus.Moneyline.HomeTrueProb, simpleAvg)
 	}
 
 	// Verify consensus is closer to DraftKings than simple average would be
@@ -232,5 +235,95 @@ func TestConsensusVendorWeighting(t *testing.T) {
 
 	if consensus.Moneyline.BookCount != 2 {
 		t.Errorf("Expected BookCount=2, got %d", consensus.Moneyline.BookCount)
+	}
+}
+
+func TestSpreadSD(t *testing.T) {
+	// Close game: tighter SD
+	if sd := spreadSD(-2.0); sd != 10.5 {
+		t.Errorf("spreadSD(-2.0) = %.1f, want 10.5", sd)
+	}
+	// Standard game
+	if sd := spreadSD(-5.5); sd != 11.5 {
+		t.Errorf("spreadSD(-5.5) = %.1f, want 11.5", sd)
+	}
+	// Blowout-prone
+	if sd := spreadSD(-10.0); sd != 12.5 {
+		t.Errorf("spreadSD(-10.0) = %.1f, want 12.5", sd)
+	}
+}
+
+func TestTotalSD(t *testing.T) {
+	if sd := totalSD(210.0); sd != 15.5 {
+		t.Errorf("totalSD(210.0) = %.1f, want 15.5", sd)
+	}
+	if sd := totalSD(222.0); sd != 17.0 {
+		t.Errorf("totalSD(222.0) = %.1f, want 17.0", sd)
+	}
+	if sd := totalSD(235.0); sd != 18.5 {
+		t.Errorf("totalSD(235.0) = %.1f, want 18.5", sd)
+	}
+}
+
+func TestWinsorizedConsensus(t *testing.T) {
+	// With 5 books, one outlier at 0.95 and four at 0.55:
+	// Without winsorization: consensus pulled toward outlier
+	// With winsorization: outlier influence is capped
+	probs := []weightedProb{
+		{0.55, 0.45, 1.0},
+		{0.55, 0.45, 1.0},
+		{0.55, 0.45, 1.0},
+		{0.55, 0.45, 1.0},
+		{0.95, 0.05, 1.0}, // outlier
+	}
+	a, b := logLinearConsensus(probs)
+
+	// Consensus should be much closer to 0.55 than to 0.95
+	if a > 0.70 {
+		t.Errorf("Winsorized consensus should cap outlier: got %.4f (expected < 0.70)", a)
+	}
+	if math.Abs(a+b-1.0) > 0.001 {
+		t.Errorf("Probs should sum to 1, got %.4f", a+b)
+	}
+
+	t.Logf("Winsorized consensus with outlier: %.4f (arithmetic would be ~0.70)", a)
+}
+
+func TestLogLinearConsensus(t *testing.T) {
+	// Equal weights, symmetric probs → should be 0.5
+	probs := []weightedProb{
+		{0.6, 0.4, 1.0},
+		{0.4, 0.6, 1.0},
+	}
+	a, b := logLinearConsensus(probs)
+	if math.Abs(a-0.5) > 0.001 || math.Abs(b-0.5) > 0.001 {
+		t.Errorf("Symmetric probs should yield 0.5/0.5, got %.4f/%.4f", a, b)
+	}
+
+	// Single entry → should return that entry
+	probs2 := []weightedProb{{0.7, 0.3, 1.0}}
+	a2, b2 := logLinearConsensus(probs2)
+	if math.Abs(a2-0.7) > 0.001 || math.Abs(b2-0.3) > 0.001 {
+		t.Errorf("Single entry should return same prob, got %.4f/%.4f", a2, b2)
+	}
+
+	// Verify a + b ≈ 1
+	if math.Abs(a+b-1.0) > 0.001 {
+		t.Errorf("Probs should sum to 1, got %.4f", a+b)
+	}
+	if math.Abs(a2+b2-1.0) > 0.001 {
+		t.Errorf("Probs should sum to 1, got %.4f", a2+b2)
+	}
+
+	// Log-linear should differ from arithmetic: logit amplifies confident signals
+	extreme := []weightedProb{
+		{0.9, 0.1, 1.0},
+		{0.5, 0.5, 1.0},
+	}
+	logA, _ := logLinearConsensus(extreme)
+	arithmeticA := (0.9*1.0 + 0.5*1.0) / 2.0 // 0.70
+	// Log-linear should be higher than arithmetic mean (logit amplifies 0.9's confidence)
+	if logA <= arithmeticA {
+		t.Errorf("Log-linear (%.4f) should be > arithmetic mean (%.4f) for high-confidence input", logA, arithmeticA)
 	}
 }

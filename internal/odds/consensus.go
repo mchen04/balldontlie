@@ -18,6 +18,13 @@ const (
 	// Based on Boyd's Bets O/U margin data (empirical range 15-21)
 	NBATotalStdDev = 17.0
 
+	// NBASpreadDF is the degrees of freedom for t-distribution on NBA spreads.
+	// Empirical kurtosis ~3.7 → fatter tails than normal.
+	NBASpreadDF = 7.0
+
+	// NBATotalDF is the degrees of freedom for t-distribution on NBA totals.
+	// Totals have slightly thinner tails than spreads.
+	NBATotalDF = 9.0
 )
 
 // MarketType represents the type of betting market
@@ -190,50 +197,58 @@ func CalculateConsensus(gameOdds api.GameOdds, maxOddsAgeSec ...int) ConsensusOd
 
 	// Calculate weighted averages across all books
 	if len(mlProbs) > 0 {
-		var homeSum, awaySum, wSum float64
-		for _, p := range mlProbs {
-			homeSum += p.a * p.weight
-			awaySum += p.b * p.weight
-			wSum += p.weight
-		}
+		homeProb, awayProb := logLinearConsensus(mlProbs)
 		consensus.Moneyline = &MoneylineConsensus{
-			HomeTrueProb: homeSum / wSum,
-			AwayTrueProb: awaySum / wSum,
+			HomeTrueProb: homeProb,
+			AwayTrueProb: awayProb,
 			BookCount:    len(mlProbs),
 		}
 	}
 
 	if len(spreadProbs) > 0 {
-		var homeCoverSum, awayCoverSum, wSum float64
-		for _, p := range spreadProbs {
-			homeCoverSum += p.a * p.weight
-			awayCoverSum += p.b * p.weight
-			wSum += p.weight
-		}
+		homeCover, awayCover := logLinearConsensus(spreadProbs)
 		consensus.Spread = &SpreadConsensus{
 			HomeSpread:    kalshiSpreadLine, // Use Kalshi line as the reference
-			HomeCoverProb: homeCoverSum / wSum,
-			AwayCoverProb: awayCoverSum / wSum,
+			HomeCoverProb: homeCover,
+			AwayCoverProb: awayCover,
 			BookCount:     len(spreadProbs),
 		}
 	}
 
 	if len(totalProbs) > 0 {
-		var overSum, underSum, wSum float64
-		for _, p := range totalProbs {
-			overSum += p.a * p.weight
-			underSum += p.b * p.weight
-			wSum += p.weight
-		}
+		overProb, underProb := logLinearConsensus(totalProbs)
 		consensus.Total = &TotalConsensus{
 			Line:      kalshiTotalLine, // Use Kalshi line as the reference
-			OverProb:  overSum / wSum,
-			UnderProb: underSum / wSum,
+			OverProb:  overProb,
+			UnderProb: underProb,
 			BookCount: len(totalProbs),
 		}
 	}
 
 	return consensus
+}
+
+// logLinearConsensus averages probabilities in logit space (log-linear opinion pool).
+// Applies winsorization (±2σ) when 3+ books to cap outlier influence.
+// Returns (sigmoid(weightedAvgLogit), 1 - sigmoid(weightedAvgLogit)).
+func logLinearConsensus(probs []weightedProb) (float64, float64) {
+	logits := make([]float64, len(probs))
+	weights := make([]float64, len(probs))
+	for i, p := range probs {
+		logits[i] = mathutil.Logit(p.a)
+		weights[i] = p.weight
+	}
+
+	// Winsorize outliers at ±2σ when we have enough data points
+	mathutil.WinsorizeLogits(logits, weights, 2.0)
+
+	var logitSum, wSum float64
+	for i := range logits {
+		logitSum += logits[i] * weights[i]
+		wSum += weights[i]
+	}
+	a := mathutil.Sigmoid(logitSum / wSum)
+	return a, 1 - a
 }
 
 // normalizeSpreadProb adjusts spread probabilities from bookLine to targetLine
@@ -244,25 +259,54 @@ func CalculateConsensus(gameOdds api.GameOdds, maxOddsAgeSec ...int) ConsensusOd
 //
 // For negative spreads: larger absolute value = harder to cover
 // Moving from -6.0 to -5.5 = easier = higher cover probability
+// spreadSD returns the context-dependent standard deviation for NBA spreads.
+// Close games have tighter distributions; blowout-prone games are wider.
+func spreadSD(homeSpread float64) float64 {
+	abs := homeSpread
+	if abs < 0 {
+		abs = -abs
+	}
+	switch {
+	case abs <= 3:
+		return 10.5 // Close matchup: tighter distribution
+	case abs <= 7:
+		return 11.5 // Standard
+	default:
+		return 12.5 // Large spread: wider variance
+	}
+}
+
+// totalSD returns the context-dependent standard deviation for NBA totals.
+// Higher-scoring games (higher pace) have wider variance.
+func totalSD(totalLine float64) float64 {
+	switch {
+	case totalLine < 215:
+		return 15.5
+	case totalLine <= 230:
+		return 17.0
+	default:
+		return 18.5
+	}
+}
+
 func normalizeSpreadProb(homeCover, awayCover, bookLine, targetLine float64) (float64, float64) {
 	if bookLine == targetLine {
 		return homeCover, awayCover
 	}
 
-	// Convert book's cover probability to a z-score
-	bookZ := mathutil.NormalInvCDF(homeCover)
+	sd := spreadSD(targetLine)
+
+	// Convert book's cover probability to a t-score (fat-tailed)
+	bookT := mathutil.TDistInvCDF(homeCover, NBASpreadDF)
 
 	// Line difference: positive when target is easier for home to cover
-	// For negative spreads: -5.5 > -6.0, so targetLine - bookLine > 0 when easier
-	// For positive spreads: +5.5 < +6.0, so targetLine - bookLine < 0 when easier
-	// But both cases: higher number = easier for home, so use (targetLine - bookLine)
 	lineDiff := targetLine - bookLine
 
-	// Adjust z-score: easier target = higher probability = higher z
-	targetZ := bookZ + (lineDiff / NBASpreadStdDev)
+	// Adjust t-score: easier target = higher probability = higher t
+	targetT := bookT + (lineDiff / sd)
 
-	// Convert back to probability
-	adjustedHome := mathutil.NormalCDF(targetZ)
+	// Convert back to probability using t-distribution CDF
+	adjustedHome := mathutil.TDistCDF(targetT, NBASpreadDF)
 	adjustedAway := 1.0 - adjustedHome
 
 	// Clamp to valid range, then derive away to preserve sum-to-1
@@ -281,16 +325,18 @@ func normalizeTotalProb(overProb, underProb, bookLine, targetLine float64) (floa
 		return overProb, underProb
 	}
 
-	// Convert book's over probability to z-score
-	bookZ := mathutil.NormalInvCDF(overProb)
+	sd := totalSD(targetLine)
+
+	// Convert book's over probability to t-score (fat-tailed)
+	bookT := mathutil.TDistInvCDF(overProb, NBATotalDF)
 
 	// For totals: lower target = easier to go over
 	// lineDiff > 0 means target is higher (harder to go over)
 	lineDiff := targetLine - bookLine
-	targetZ := bookZ - (lineDiff / NBATotalStdDev)
+	targetT := bookT - (lineDiff / sd)
 
-	// Convert back to probability
-	adjustedOver := mathutil.NormalCDF(targetZ)
+	// Convert back to probability using t-distribution CDF
+	adjustedOver := mathutil.TDistCDF(targetT, NBATotalDF)
 	adjustedUnder := 1.0 - adjustedOver
 
 	// Clamp to valid range, then derive under to preserve sum-to-1

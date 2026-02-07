@@ -37,6 +37,32 @@ type Opportunity struct {
 	BookCount     int     // Number of books in consensus
 }
 
+// shrinkFullWeightAt is the book count at which shrinkage stops.
+const shrinkFullWeightAt = 6
+
+// ShrinkToward blends observed toward prior based on book count.
+// At fullWeightAt books or more, returns observed unchanged.
+// Below fullWeightAt, blends linearly toward prior.
+func ShrinkToward(observed, prior float64, bookCount, fullWeightAt int) float64 {
+	gap := fullWeightAt - bookCount
+	if gap <= 0 {
+		return observed
+	}
+	n := float64(bookCount)
+	g := float64(gap)
+	return (n*observed + g*prior) / (n + g)
+}
+
+// ScaledEVThreshold raises the EV threshold when book count is low.
+// At 6+ books: base. At 5: +1%. At 4: +2%.
+func ScaledEVThreshold(baseThreshold float64, bookCount int) float64 {
+	gap := 6 - bookCount
+	if gap <= 0 {
+		return baseThreshold
+	}
+	return baseThreshold + 0.01*float64(gap)
+}
+
 // CalculateEV calculates the expected value of a bet
 // EV = (trueProb * profit) - ((1 - trueProb) * stake)
 // For Kalshi: stake = price, profit = 1 - price
@@ -79,10 +105,16 @@ func FindMoneylineOpportunities(consensus odds.ConsensusOdds, cfg Config) []Oppo
 	homeKalshiProb := odds.OddsToImplied(kalshi.Home)
 	awayKalshiProb := odds.OddsToImplied(kalshi.Away)
 
+	bc := consensus.Moneyline.BookCount
+
+	// Shrink consensus toward Kalshi prior when book count is low
+	homeProb := ShrinkToward(consensus.Moneyline.HomeTrueProb, homeKalshiProb, bc, shrinkFullWeightAt)
+	awayProb := ShrinkToward(consensus.Moneyline.AwayTrueProb, awayKalshiProb, bc, shrinkFullWeightAt)
+
 	// Check home team
 	if homeKalshiProb > 0 {
-		adjEV := CalculateAdjustedEV(consensus.Moneyline.HomeTrueProb, homeKalshiProb)
-		if adjEV >= cfg.EVThreshold {
+		adjEV := CalculateAdjustedEV(homeProb, homeKalshiProb)
+		if adjEV >= ScaledEVThreshold(cfg.EVThreshold, bc) {
 			opps = append(opps, Opportunity{
 				GameID:      consensus.GameID,
 				GameDate:    consensus.GameDate,
@@ -90,20 +122,20 @@ func FindMoneylineOpportunities(consensus odds.ConsensusOdds, cfg Config) []Oppo
 				AwayTeam:    consensus.AwayTeam,
 				MarketType:  odds.MarketMoneyline,
 				Side:        "home",
-				TrueProb:    consensus.Moneyline.HomeTrueProb,
+				TrueProb:    homeProb,
 				KalshiPrice: homeKalshiProb,
-				RawEV:       CalculateEV(consensus.Moneyline.HomeTrueProb, homeKalshiProb),
+				RawEV:       CalculateEV(homeProb, homeKalshiProb),
 				AdjustedEV:  adjEV,
-				KellyStake:  CalculateKelly(consensus.Moneyline.HomeTrueProb, homeKalshiProb, cfg.KellyFraction),
-				BookCount:   consensus.Moneyline.BookCount,
+				KellyStake:  CalculateKelly(homeProb, homeKalshiProb, cfg.KellyFraction),
+				BookCount:   bc,
 			})
 		}
 	}
 
 	// Check away team
 	if awayKalshiProb > 0 {
-		adjEV := CalculateAdjustedEV(consensus.Moneyline.AwayTrueProb, awayKalshiProb)
-		if adjEV >= cfg.EVThreshold {
+		adjEV := CalculateAdjustedEV(awayProb, awayKalshiProb)
+		if adjEV >= ScaledEVThreshold(cfg.EVThreshold, bc) {
 			opps = append(opps, Opportunity{
 				GameID:      consensus.GameID,
 				GameDate:    consensus.GameDate,
@@ -111,12 +143,12 @@ func FindMoneylineOpportunities(consensus odds.ConsensusOdds, cfg Config) []Oppo
 				AwayTeam:    consensus.AwayTeam,
 				MarketType:  odds.MarketMoneyline,
 				Side:        "away",
-				TrueProb:    consensus.Moneyline.AwayTrueProb,
+				TrueProb:    awayProb,
 				KalshiPrice: awayKalshiProb,
-				RawEV:       CalculateEV(consensus.Moneyline.AwayTrueProb, awayKalshiProb),
+				RawEV:       CalculateEV(awayProb, awayKalshiProb),
 				AdjustedEV:  adjEV,
-				KellyStake:  CalculateKelly(consensus.Moneyline.AwayTrueProb, awayKalshiProb, cfg.KellyFraction),
-				BookCount:   consensus.Moneyline.BookCount,
+				KellyStake:  CalculateKelly(awayProb, awayKalshiProb, cfg.KellyFraction),
+				BookCount:   bc,
 			})
 		}
 	}
@@ -143,10 +175,16 @@ func FindSpreadOpportunities(consensus odds.ConsensusOdds, cfg Config) []Opportu
 	homeCoverKalshi := odds.OddsToImplied(kalshi.HomeOdds)
 	awayCoverKalshi := odds.OddsToImplied(kalshi.AwayOdds)
 
+	bc := consensus.Spread.BookCount
+
+	// Shrink consensus toward Kalshi prior when book count is low
+	homeCoverProb := ShrinkToward(consensus.Spread.HomeCoverProb, homeCoverKalshi, bc, shrinkFullWeightAt)
+	awayCoverProb := ShrinkToward(consensus.Spread.AwayCoverProb, awayCoverKalshi, bc, shrinkFullWeightAt)
+
 	// Check home cover
 	if homeCoverKalshi > 0 {
-		adjEV := CalculateAdjustedEV(consensus.Spread.HomeCoverProb, homeCoverKalshi)
-		if adjEV >= cfg.EVThreshold {
+		adjEV := CalculateAdjustedEV(homeCoverProb, homeCoverKalshi)
+		if adjEV >= ScaledEVThreshold(cfg.EVThreshold, bc) {
 			opps = append(opps, Opportunity{
 				GameID:      consensus.GameID,
 				GameDate:    consensus.GameDate,
@@ -154,20 +192,20 @@ func FindSpreadOpportunities(consensus odds.ConsensusOdds, cfg Config) []Opportu
 				AwayTeam:    consensus.AwayTeam,
 				MarketType:  odds.MarketSpread,
 				Side:        "home",
-				TrueProb:    consensus.Spread.HomeCoverProb,
+				TrueProb:    homeCoverProb,
 				KalshiPrice: homeCoverKalshi,
-				RawEV:       CalculateEV(consensus.Spread.HomeCoverProb, homeCoverKalshi),
+				RawEV:       CalculateEV(homeCoverProb, homeCoverKalshi),
 				AdjustedEV:  adjEV,
-				KellyStake:  CalculateKelly(consensus.Spread.HomeCoverProb, homeCoverKalshi, cfg.KellyFraction),
-				BookCount:   consensus.Spread.BookCount,
+				KellyStake:  CalculateKelly(homeCoverProb, homeCoverKalshi, cfg.KellyFraction),
+				BookCount:   bc,
 			})
 		}
 	}
 
 	// Check away cover
 	if awayCoverKalshi > 0 {
-		adjEV := CalculateAdjustedEV(consensus.Spread.AwayCoverProb, awayCoverKalshi)
-		if adjEV >= cfg.EVThreshold {
+		adjEV := CalculateAdjustedEV(awayCoverProb, awayCoverKalshi)
+		if adjEV >= ScaledEVThreshold(cfg.EVThreshold, bc) {
 			opps = append(opps, Opportunity{
 				GameID:      consensus.GameID,
 				GameDate:    consensus.GameDate,
@@ -175,12 +213,12 @@ func FindSpreadOpportunities(consensus odds.ConsensusOdds, cfg Config) []Opportu
 				AwayTeam:    consensus.AwayTeam,
 				MarketType:  odds.MarketSpread,
 				Side:        "away",
-				TrueProb:    consensus.Spread.AwayCoverProb,
+				TrueProb:    awayCoverProb,
 				KalshiPrice: awayCoverKalshi,
-				RawEV:       CalculateEV(consensus.Spread.AwayCoverProb, awayCoverKalshi),
+				RawEV:       CalculateEV(awayCoverProb, awayCoverKalshi),
 				AdjustedEV:  adjEV,
-				KellyStake:  CalculateKelly(consensus.Spread.AwayCoverProb, awayCoverKalshi, cfg.KellyFraction),
-				BookCount:   consensus.Spread.BookCount,
+				KellyStake:  CalculateKelly(awayCoverProb, awayCoverKalshi, cfg.KellyFraction),
+				BookCount:   bc,
 			})
 		}
 	}
@@ -207,10 +245,16 @@ func FindTotalOpportunities(consensus odds.ConsensusOdds, cfg Config) []Opportun
 	overKalshi := odds.OddsToImplied(kalshi.OverOdds)
 	underKalshi := odds.OddsToImplied(kalshi.UnderOdds)
 
+	bc := consensus.Total.BookCount
+
+	// Shrink consensus toward Kalshi prior when book count is low
+	overProb := ShrinkToward(consensus.Total.OverProb, overKalshi, bc, shrinkFullWeightAt)
+	underProb := ShrinkToward(consensus.Total.UnderProb, underKalshi, bc, shrinkFullWeightAt)
+
 	// Check over
 	if overKalshi > 0 {
-		adjEV := CalculateAdjustedEV(consensus.Total.OverProb, overKalshi)
-		if adjEV >= cfg.EVThreshold {
+		adjEV := CalculateAdjustedEV(overProb, overKalshi)
+		if adjEV >= ScaledEVThreshold(cfg.EVThreshold, bc) {
 			opps = append(opps, Opportunity{
 				GameID:      consensus.GameID,
 				GameDate:    consensus.GameDate,
@@ -218,20 +262,20 @@ func FindTotalOpportunities(consensus odds.ConsensusOdds, cfg Config) []Opportun
 				AwayTeam:    consensus.AwayTeam,
 				MarketType:  odds.MarketTotal,
 				Side:        "over",
-				TrueProb:    consensus.Total.OverProb,
+				TrueProb:    overProb,
 				KalshiPrice: overKalshi,
-				RawEV:       CalculateEV(consensus.Total.OverProb, overKalshi),
+				RawEV:       CalculateEV(overProb, overKalshi),
 				AdjustedEV:  adjEV,
-				KellyStake:  CalculateKelly(consensus.Total.OverProb, overKalshi, cfg.KellyFraction),
-				BookCount:   consensus.Total.BookCount,
+				KellyStake:  CalculateKelly(overProb, overKalshi, cfg.KellyFraction),
+				BookCount:   bc,
 			})
 		}
 	}
 
 	// Check under
 	if underKalshi > 0 {
-		adjEV := CalculateAdjustedEV(consensus.Total.UnderProb, underKalshi)
-		if adjEV >= cfg.EVThreshold {
+		adjEV := CalculateAdjustedEV(underProb, underKalshi)
+		if adjEV >= ScaledEVThreshold(cfg.EVThreshold, bc) {
 			opps = append(opps, Opportunity{
 				GameID:      consensus.GameID,
 				GameDate:    consensus.GameDate,
@@ -239,12 +283,12 @@ func FindTotalOpportunities(consensus odds.ConsensusOdds, cfg Config) []Opportun
 				AwayTeam:    consensus.AwayTeam,
 				MarketType:  odds.MarketTotal,
 				Side:        "under",
-				TrueProb:    consensus.Total.UnderProb,
+				TrueProb:    underProb,
 				KalshiPrice: underKalshi,
-				RawEV:       CalculateEV(consensus.Total.UnderProb, underKalshi),
+				RawEV:       CalculateEV(underProb, underKalshi),
 				AdjustedEV:  adjEV,
-				KellyStake:  CalculateKelly(consensus.Total.UnderProb, underKalshi, cfg.KellyFraction),
-				BookCount:   consensus.Total.BookCount,
+				KellyStake:  CalculateKelly(underProb, underKalshi, cfg.KellyFraction),
+				BookCount:   bc,
 			})
 		}
 	}

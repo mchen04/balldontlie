@@ -109,10 +109,11 @@ func CalculateKellyBetSize(trueProb, kalshiPrice, fraction, bankroll, maxBet flo
 	return betSize
 }
 
-// CalculateKellyContracts converts Kelly bet size to number of contracts
-// priceInCents is the Kalshi price (1-99 cents per contract)
-// Returns the number of contracts to buy
-func CalculateKellyContracts(trueProb, kalshiPrice, fraction, bankrollDollars, maxBetDollars float64, priceInCents int) int {
+// CalculateKellyContracts converts Kelly bet size to number of contracts.
+// priceInCents is the Kalshi price (1-99 cents per contract).
+// Optional askDepth caps the result at available liquidity.
+// Returns the number of contracts to buy.
+func CalculateKellyContracts(trueProb, kalshiPrice, fraction, bankrollDollars, maxBetDollars float64, priceInCents int, askDepth ...int) int {
 	betSize := CalculateKellyBetSize(trueProb, kalshiPrice, fraction, bankrollDollars, maxBetDollars)
 	if betSize <= 0 || priceInCents <= 0 {
 		return 0
@@ -123,6 +124,11 @@ func CalculateKellyContracts(trueProb, kalshiPrice, fraction, bankrollDollars, m
 	feeCents := kalshi.TakerFeeCents(priceInCents)
 	costPerContract := float64(priceInCents) + feeCents
 	contracts := int(betSizeCents / costPerContract)
+
+	// Cap at available ask depth if provided
+	if len(askDepth) > 0 && askDepth[0] > 0 && contracts > askDepth[0] {
+		contracts = askDepth[0]
+	}
 
 	return contracts
 }

@@ -42,17 +42,18 @@ func NegBinPMF(k int, mu, r float64) float64 {
 	return math.Exp(logProb)
 }
 
-// NegBinCDFOver calculates P(X >= k) for Negative Binomial distribution
+// NegBinCDFOver calculates P(X >= k) for Negative Binomial distribution.
+// Uses the regularized incomplete beta function for O(1) computation:
+// P(X >= k) = 1 - I_p(r, k) where p = r/(r+mu).
 func NegBinCDFOver(k int, mu, r float64) float64 {
 	if mu <= 0 || r <= 0 {
 		return 0
 	}
-	// P(X >= k) = 1 - P(X < k) = 1 - Σ P(X=i) for i=0 to k-1
-	sum := 0.0
-	for i := 0; i < k; i++ {
-		sum += NegBinPMF(i, mu, r)
+	if k <= 0 {
+		return 1.0
 	}
-	return 1 - sum
+	p := r / (r + mu)
+	return 1 - mathutil.RegBetaI(r, float64(k), p)
 }
 
 // InferNegBinMean finds mu such that P(X >= threshold) ≈ targetProb
@@ -240,19 +241,11 @@ func EstimateProbabilityFromMultipleLines(
 		return EstimateProbabilityAtLine(bdlLines[0], bdlProbs[0], kalshiLine, propType)
 	}
 
-	// CORRECT APPROACH: Shift each line's probability to Kalshi's line, then average
-	// This is mathematically correct because:
-	// 1. Each BDL line has a consensus probability from multiple books
-	// 2. We shift each of those to Kalshi's line using the distribution
-	// 3. Then average the shifted probabilities
-	//
-	// Example: BDL has lines at 23.5 (55%), 24.5 (48%), 25.5 (40%), Kalshi is 25
-	// - Shift 23.5@55% to 25 → ~42%
-	// - Shift 24.5@48% to 25 → ~45%
-	// - Shift 25.5@40% to 25 → ~43%
-	// - Average: (42 + 45 + 43) / 3 = 43.3%
+	// Shift each line's probability to Kalshi's line, then average in logit space.
+	// Logit-space averaging is consistent with the log-linear opinion pool used
+	// elsewhere and handles extreme probabilities more accurately than arithmetic.
 
-	var shiftedProbSum float64
+	var logitSum float64
 	var validCount int
 
 	for i, bdlLine := range bdlLines {
@@ -268,7 +261,7 @@ func EstimateProbabilityFromMultipleLines(
 
 		// Only count valid shifted probabilities
 		if shiftedProb > 0 && shiftedProb < 1 {
-			shiftedProbSum += shiftedProb
+			logitSum += mathutil.Logit(shiftedProb)
 			validCount++
 		}
 	}
@@ -277,5 +270,5 @@ func EstimateProbabilityFromMultipleLines(
 		return 0
 	}
 
-	return shiftedProbSum / float64(validCount)
+	return mathutil.Sigmoid(logitSum / float64(validCount))
 }

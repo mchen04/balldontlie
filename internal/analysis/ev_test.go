@@ -103,6 +103,56 @@ func TestCalculateEVEdgeCases(t *testing.T) {
 	}
 }
 
+func TestScaledEVThreshold(t *testing.T) {
+	base := 0.03
+	tests := []struct {
+		name      string
+		bookCount int
+		expected  float64
+	}{
+		{"6 books = base", 6, 0.03},
+		{"7 books = base", 7, 0.03},
+		{"5 books = +1%", 5, 0.04},
+		{"4 books = +2%", 4, 0.05},
+		{"3 books = +3%", 3, 0.06},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := ScaledEVThreshold(base, tt.bookCount)
+			if math.Abs(result-tt.expected) > 0.0001 {
+				t.Errorf("ScaledEVThreshold(%v, %d) = %v, want %v",
+					base, tt.bookCount, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestShrinkToward(t *testing.T) {
+	tests := []struct {
+		name                         string
+		observed, prior              float64
+		bookCount, fullWeightAt      int
+		expected                     float64
+		delta                        float64
+	}{
+		{"6+ books = no shrink", 0.60, 0.50, 6, 6, 0.60, 0.001},
+		{"7 books = no shrink", 0.60, 0.50, 7, 6, 0.60, 0.001},
+		{"5 books = 17% toward prior", 0.60, 0.50, 5, 6, (5*0.60 + 1*0.50) / 6, 0.001},
+		{"4 books = 33% toward prior", 0.60, 0.50, 4, 6, (4*0.60 + 2*0.50) / 6, 0.001},
+		{"equal obs/prior = no effect", 0.50, 0.50, 4, 6, 0.50, 0.001},
+		{"1 book = 83% toward prior", 0.70, 0.50, 1, 6, (1*0.70 + 5*0.50) / 6, 0.001},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := ShrinkToward(tt.observed, tt.prior, tt.bookCount, tt.fullWeightAt)
+			if math.Abs(result-tt.expected) > tt.delta {
+				t.Errorf("ShrinkToward(%v, %v, %d, %d) = %v, want %v",
+					tt.observed, tt.prior, tt.bookCount, tt.fullWeightAt, result, tt.expected)
+			}
+		})
+	}
+}
+
 func TestEVThresholdLogic(t *testing.T) {
 	cfg := DefaultConfig()
 

@@ -5,8 +5,29 @@ import (
 
 	"sports-betting-bot/internal/api"
 	"sports-betting-bot/internal/kalshi"
+	"sports-betting-bot/internal/mathutil"
 	"sports-betting-bot/internal/odds"
 )
+
+// logLinearAvg averages (over, under) probability pairs in logit space.
+// Applies winsorization (±2σ) when 3+ books to cap outlier influence.
+func logLinearAvg(overs, unders, weights []float64) (float64, float64) {
+	logits := make([]float64, len(overs))
+	for i := range overs {
+		logits[i] = mathutil.Logit(overs[i])
+	}
+
+	// Winsorize outliers at ±2σ when we have enough data points
+	mathutil.WinsorizeLogits(logits, weights, 2.0)
+
+	var logitSum, wSum float64
+	for i := range logits {
+		logitSum += logits[i] * weights[i]
+		wSum += weights[i]
+	}
+	a := mathutil.Sigmoid(logitSum / wSum)
+	return a, 1 - a
+}
 
 // PlayerPropOpportunity represents a +EV player prop opportunity
 type PlayerPropOpportunity struct {
@@ -87,13 +108,16 @@ func CalculatePlayerPropConsensus(props []api.PlayerProp) *PlayerPropConsensus {
 		return nil
 	}
 
-	// Calculate weighted average true probabilities
-	var overSum, underSum, wSum float64
-	for _, p := range probs {
-		overSum += p.over * p.weight
-		underSum += p.under * p.weight
-		wSum += p.weight
+	// Collect slices for log-linear averaging
+	overs := make([]float64, len(probs))
+	unders := make([]float64, len(probs))
+	weights := make([]float64, len(probs))
+	for i, p := range probs {
+		overs[i] = p.over
+		unders[i] = p.under
+		weights[i] = p.weight
 	}
+	overProb, underProb := logLinearAvg(overs, unders, weights)
 
 	// Player name not included in v2 API, use ID as placeholder
 	playerName := fmt.Sprintf("Player_%d", first.PlayerID)
@@ -103,8 +127,8 @@ func CalculatePlayerPropConsensus(props []api.PlayerProp) *PlayerPropConsensus {
 		PlayerName:       playerName,
 		PropType:         first.PropType,
 		Line:             first.Line(),
-		OverTrueProb:     overSum / wSum,
-		UnderTrueProb:    underSum / wSum,
+		OverTrueProb:     overProb,
+		UnderTrueProb:    underProb,
 		KalshiOverPrice:  kalshiOverPrice,
 		KalshiUnderPrice: kalshiUnderPrice,
 		BookCount:        len(probs),
@@ -134,10 +158,16 @@ func FindPlayerPropOpportunities(
 			continue
 		}
 
+		bc := consensus.BookCount
+
+		// Shrink consensus toward Kalshi prior when book count is low
+		overProb := ShrinkToward(consensus.OverTrueProb, consensus.KalshiOverPrice, bc, shrinkFullWeightAt)
+		underProb := ShrinkToward(consensus.UnderTrueProb, consensus.KalshiUnderPrice, bc, shrinkFullWeightAt)
+
 		// Check OVER opportunity
 		if consensus.KalshiOverPrice > 0 {
-			adjEV := CalculateAdjustedEV(consensus.OverTrueProb, consensus.KalshiOverPrice)
-			if adjEV >= cfg.EVThreshold {
+			adjEV := CalculateAdjustedEV(overProb, consensus.KalshiOverPrice)
+			if adjEV >= ScaledEVThreshold(cfg.EVThreshold, bc) {
 				opportunities = append(opportunities, PlayerPropOpportunity{
 					GameID:      gameID,
 					GameDate:    gameDate,
@@ -148,20 +178,20 @@ func FindPlayerPropOpportunities(
 					PropType:    consensus.PropType,
 					Line:        consensus.Line,
 					Side:        "over",
-					TrueProb:    consensus.OverTrueProb,
+					TrueProb:    overProb,
 					KalshiPrice: consensus.KalshiOverPrice,
-					RawEV:       CalculateEV(consensus.OverTrueProb, consensus.KalshiOverPrice),
+					RawEV:       CalculateEV(overProb, consensus.KalshiOverPrice),
 					AdjustedEV:  adjEV,
-					KellyStake:  CalculateKelly(consensus.OverTrueProb, consensus.KalshiOverPrice, cfg.KellyFraction),
-					BookCount:   consensus.BookCount,
+					KellyStake:  CalculateKelly(overProb, consensus.KalshiOverPrice, cfg.KellyFraction),
+					BookCount:   bc,
 				})
 			}
 		}
 
 		// Check UNDER opportunity
 		if consensus.KalshiUnderPrice > 0 {
-			adjEV := CalculateAdjustedEV(consensus.UnderTrueProb, consensus.KalshiUnderPrice)
-			if adjEV >= cfg.EVThreshold {
+			adjEV := CalculateAdjustedEV(underProb, consensus.KalshiUnderPrice)
+			if adjEV >= ScaledEVThreshold(cfg.EVThreshold, bc) {
 				opportunities = append(opportunities, PlayerPropOpportunity{
 					GameID:      gameID,
 					GameDate:    gameDate,
@@ -172,12 +202,12 @@ func FindPlayerPropOpportunities(
 					PropType:    consensus.PropType,
 					Line:        consensus.Line,
 					Side:        "under",
-					TrueProb:    consensus.UnderTrueProb,
+					TrueProb:    underProb,
 					KalshiPrice: consensus.KalshiUnderPrice,
-					RawEV:       CalculateEV(consensus.UnderTrueProb, consensus.KalshiUnderPrice),
+					RawEV:       CalculateEV(underProb, consensus.KalshiUnderPrice),
 					AdjustedEV:  adjEV,
-					KellyStake:  CalculateKelly(consensus.UnderTrueProb, consensus.KalshiUnderPrice, cfg.KellyFraction),
-					BookCount:   consensus.BookCount,
+					KellyStake:  CalculateKelly(underProb, consensus.KalshiUnderPrice, cfg.KellyFraction),
+					BookCount:   bc,
 				})
 			}
 		}
@@ -275,10 +305,14 @@ func FindPlayerPropOpportunitiesWithKalshi(
 		kalshiOverPrice := float64(matchedKalshi.YesAsk) / 100.0
 		kalshiUnderPrice := float64(matchedKalshi.NoAsk) / 100.0
 
+		bc := consensus.BookCount
+		overProb := ShrinkToward(consensus.OverTrueProb, kalshiOverPrice, bc, shrinkFullWeightAt)
+		underProb := ShrinkToward(consensus.UnderTrueProb, kalshiUnderPrice, bc, shrinkFullWeightAt)
+
 		// Check OVER opportunity (YES on Kalshi)
 		if kalshiOverPrice > 0 && kalshiOverPrice < 1 {
-			adjEV := CalculateAdjustedEV(consensus.OverTrueProb, kalshiOverPrice)
-			if adjEV >= cfg.EVThreshold {
+			adjEV := CalculateAdjustedEV(overProb, kalshiOverPrice)
+			if adjEV >= ScaledEVThreshold(cfg.EVThreshold, bc) {
 				opportunities = append(opportunities, PlayerPropOpportunity{
 					GameID:       gameID,
 					GameDate:     gameDate,
@@ -289,12 +323,12 @@ func FindPlayerPropOpportunitiesWithKalshi(
 					PropType:     key.PropType,
 					Line:         matchedKalshi.Line,
 					Side:         "over",
-					TrueProb:     consensus.OverTrueProb,
+					TrueProb:     overProb,
 					KalshiPrice:  kalshiOverPrice,
-					RawEV:        CalculateEV(consensus.OverTrueProb, kalshiOverPrice),
+					RawEV:        CalculateEV(overProb, kalshiOverPrice),
 					AdjustedEV:   adjEV,
-					KellyStake:   CalculateKelly(consensus.OverTrueProb, kalshiOverPrice, cfg.KellyFraction),
-					BookCount:    consensus.BookCount,
+					KellyStake:   CalculateKelly(overProb, kalshiOverPrice, cfg.KellyFraction),
+					BookCount:    bc,
 					KalshiTicker: matchedKalshi.Ticker,
 				})
 			}
@@ -302,8 +336,8 @@ func FindPlayerPropOpportunitiesWithKalshi(
 
 		// Check UNDER opportunity (NO on Kalshi)
 		if kalshiUnderPrice > 0 && kalshiUnderPrice < 1 {
-			adjEV := CalculateAdjustedEV(consensus.UnderTrueProb, kalshiUnderPrice)
-			if adjEV >= cfg.EVThreshold {
+			adjEV := CalculateAdjustedEV(underProb, kalshiUnderPrice)
+			if adjEV >= ScaledEVThreshold(cfg.EVThreshold, bc) {
 				opportunities = append(opportunities, PlayerPropOpportunity{
 					GameID:       gameID,
 					GameDate:     gameDate,
@@ -314,12 +348,12 @@ func FindPlayerPropOpportunitiesWithKalshi(
 					PropType:     key.PropType,
 					Line:         matchedKalshi.Line,
 					Side:         "under",
-					TrueProb:     consensus.UnderTrueProb,
+					TrueProb:     underProb,
 					KalshiPrice:  kalshiUnderPrice,
-					RawEV:        CalculateEV(consensus.UnderTrueProb, kalshiUnderPrice),
+					RawEV:        CalculateEV(underProb, kalshiUnderPrice),
 					AdjustedEV:   adjEV,
-					KellyStake:   CalculateKelly(consensus.UnderTrueProb, kalshiUnderPrice, cfg.KellyFraction),
-					BookCount:    consensus.BookCount,
+					KellyStake:   CalculateKelly(underProb, kalshiUnderPrice, cfg.KellyFraction),
+					BookCount:    bc,
 					KalshiTicker: matchedKalshi.Ticker,
 				})
 			}
@@ -446,10 +480,14 @@ func FindPlayerPropOpportunitiesWithInterpolation(
 			kalshiOverPrice := float64(km.YesAsk) / 100.0
 			kalshiUnderPrice := float64(km.NoAsk) / 100.0
 
+			// Shrink estimated probs toward Kalshi prior
+			overProb := ShrinkToward(estimatedOverProb, kalshiOverPrice, avgBooks, shrinkFullWeightAt)
+			underProb := ShrinkToward(estimatedUnderProb, kalshiUnderPrice, avgBooks, shrinkFullWeightAt)
+
 			// Check OVER opportunity
 			if kalshiOverPrice > 0 && kalshiOverPrice < 1 {
-				adjEV := CalculateAdjustedEV(estimatedOverProb, kalshiOverPrice)
-				if adjEV >= cfg.EVThreshold {
+				adjEV := CalculateAdjustedEV(overProb, kalshiOverPrice)
+				if adjEV >= ScaledEVThreshold(cfg.EVThreshold, avgBooks) {
 					opportunities = append(opportunities, PlayerPropOpportunity{
 						GameID:       gameID,
 						GameDate:     gameDate,
@@ -460,11 +498,11 @@ func FindPlayerPropOpportunitiesWithInterpolation(
 						PropType:     ppKey.PropType,
 						Line:         kalshiLine,
 						Side:         "over",
-						TrueProb:     estimatedOverProb,
+						TrueProb:     overProb,
 						KalshiPrice:  kalshiOverPrice,
-						RawEV:        CalculateEV(estimatedOverProb, kalshiOverPrice),
+						RawEV:        CalculateEV(overProb, kalshiOverPrice),
 						AdjustedEV:   adjEV,
-						KellyStake:   CalculateKelly(estimatedOverProb, kalshiOverPrice, cfg.KellyFraction),
+						KellyStake:   CalculateKelly(overProb, kalshiOverPrice, cfg.KellyFraction),
 						BookCount:    avgBooks,
 						KalshiTicker: km.Ticker,
 					})
@@ -473,8 +511,8 @@ func FindPlayerPropOpportunitiesWithInterpolation(
 
 			// Check UNDER opportunity
 			if kalshiUnderPrice > 0 && kalshiUnderPrice < 1 {
-				adjEV := CalculateAdjustedEV(estimatedUnderProb, kalshiUnderPrice)
-				if adjEV >= cfg.EVThreshold {
+				adjEV := CalculateAdjustedEV(underProb, kalshiUnderPrice)
+				if adjEV >= ScaledEVThreshold(cfg.EVThreshold, avgBooks) {
 					opportunities = append(opportunities, PlayerPropOpportunity{
 						GameID:       gameID,
 						GameDate:     gameDate,
@@ -485,11 +523,11 @@ func FindPlayerPropOpportunitiesWithInterpolation(
 						PropType:     ppKey.PropType,
 						Line:         kalshiLine,
 						Side:         "under",
-						TrueProb:     estimatedUnderProb,
+						TrueProb:     underProb,
 						KalshiPrice:  kalshiUnderPrice,
-						RawEV:        CalculateEV(estimatedUnderProb, kalshiUnderPrice),
+						RawEV:        CalculateEV(underProb, kalshiUnderPrice),
 						AdjustedEV:   adjEV,
-						KellyStake:   CalculateKelly(estimatedUnderProb, kalshiUnderPrice, cfg.KellyFraction),
+						KellyStake:   CalculateKelly(underProb, kalshiUnderPrice, cfg.KellyFraction),
 						BookCount:    avgBooks,
 						KalshiTicker: km.Ticker,
 					})
@@ -542,20 +580,23 @@ func calculateBDLConsensus(props []api.PlayerProp) *PlayerPropConsensus {
 		return nil
 	}
 
-	var overSum, underSum, wSum float64
-	for _, p := range probs {
-		overSum += p.over * p.weight
-		underSum += p.under * p.weight
-		wSum += p.weight
+	overs := make([]float64, len(probs))
+	unders := make([]float64, len(probs))
+	weights := make([]float64, len(probs))
+	for i, p := range probs {
+		overs[i] = p.over
+		unders[i] = p.under
+		weights[i] = p.weight
 	}
+	overProb, underProb := logLinearAvg(overs, unders, weights)
 
 	return &PlayerPropConsensus{
 		PlayerID:      first.PlayerID,
 		PlayerName:    fmt.Sprintf("Player_%d", first.PlayerID),
 		PropType:      first.PropType,
 		Line:          first.Line(),
-		OverTrueProb:  overSum / wSum,
-		UnderTrueProb: underSum / wSum,
+		OverTrueProb:  overProb,
+		UnderTrueProb: underProb,
 		BookCount:     len(probs),
 	}
 }

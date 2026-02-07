@@ -144,6 +144,32 @@ func TestOptimalBetSize(t *testing.T) {
 	}
 }
 
+func TestCalculateKellyContractsWithAskDepth(t *testing.T) {
+	// Without depth cap
+	contracts := CalculateKellyContracts(0.60, 0.45, 0.25, 1000, 100, 45)
+	if contracts <= 0 {
+		t.Fatal("Expected positive contracts without depth cap")
+	}
+
+	// With depth cap lower than Kelly
+	capped := CalculateKellyContracts(0.60, 0.45, 0.25, 1000, 100, 45, 3)
+	if capped > 3 {
+		t.Errorf("Expected contracts capped at 3, got %d", capped)
+	}
+
+	// With depth cap higher than Kelly — should not change result
+	uncapped := CalculateKellyContracts(0.60, 0.45, 0.25, 1000, 100, 45, 10000)
+	if uncapped != contracts {
+		t.Errorf("High depth cap should not change result: %d vs %d", uncapped, contracts)
+	}
+
+	// askDepth=0 means no cap (same as no arg)
+	noCap := CalculateKellyContracts(0.60, 0.45, 0.25, 1000, 100, 45, 0)
+	if noCap != contracts {
+		t.Errorf("askDepth=0 should mean no cap: %d vs %d", noCap, contracts)
+	}
+}
+
 func TestKellyWithEdge(t *testing.T) {
 	// If we know the edge directly, we can use a simplified formula
 	edge := 0.05        // 5% edge

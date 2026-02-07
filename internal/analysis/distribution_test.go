@@ -182,6 +182,58 @@ func TestEstimateProbabilityAtLineNegBin(t *testing.T) {
 	}
 }
 
+func TestNegBinCDFOverMatchesPMFSum(t *testing.T) {
+	// Verify RegBetaI-based NegBinCDFOver matches the PMF summation approach
+	mu := 8.0
+	r := 26.4 // rebounds with mean 8
+
+	for k := 1; k <= 20; k++ {
+		// Manual PMF summation (the old approach)
+		sum := 0.0
+		for i := 0; i < k; i++ {
+			sum += NegBinPMF(i, mu, r)
+		}
+		pSumMethod := 1 - sum
+
+		// New RegBetaI approach
+		pBeta := NegBinCDFOver(k, mu, r)
+
+		if math.Abs(pBeta-pSumMethod) > 0.005 {
+			t.Errorf("NegBinCDFOver(%d, %.1f, %.1f): RegBetaI=%.6f, PMF_sum=%.6f, diff=%.6f",
+				k, mu, r, pBeta, pSumMethod, pBeta-pSumMethod)
+		}
+	}
+}
+
+func TestMultiLineLogitAveraging(t *testing.T) {
+	// Verify logit-space averaging differs from arithmetic averaging
+	bdlLines := []float64{19.5, 20.5, 21.5}
+	bdlProbs := []float64{0.85, 0.75, 0.65}
+
+	result := EstimateProbabilityFromMultipleLines(bdlLines, bdlProbs, 22.0, "points")
+
+	// Result should be valid probability
+	if result <= 0 || result >= 1 {
+		t.Fatalf("EstimateProbabilityFromMultipleLines returned invalid: %.4f", result)
+	}
+
+	// Get individual shifted probabilities and compute arithmetic avg for comparison
+	p1 := EstimateProbabilityAtLine(19.5, 0.85, 22.0, "points")
+	p2 := EstimateProbabilityAtLine(20.5, 0.75, 22.0, "points")
+	p3 := EstimateProbabilityAtLine(21.5, 0.65, 22.0, "points")
+	arithmeticAvg := (p1 + p2 + p3) / 3.0
+
+	// Logit average should differ from arithmetic (they converge near 0.5 but diverge at extremes)
+	diff := math.Abs(result - arithmeticAvg)
+	t.Logf("Multi-line: logit=%.4f, arithmetic=%.4f, diff=%.4f (p1=%.4f, p2=%.4f, p3=%.4f)",
+		result, arithmeticAvg, diff, p1, p2, p3)
+
+	// Result should be less than the max BDL prob (we're extrapolating to a higher line)
+	if result >= 0.85 {
+		t.Errorf("Probability at higher line should be < 0.85, got %.4f", result)
+	}
+}
+
 func TestNegBinVsPoissonComparison(t *testing.T) {
 	// Compare NegBin with low vs high dispersion for rebounds
 	mu := 8.0

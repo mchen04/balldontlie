@@ -469,10 +469,13 @@ func TestOpportunityDetection(t *testing.T) {
 			Status:      "scheduled",
 		},
 		Vendors: []api.Vendor{
-			// Consensus says home team is 60% favorite
+			// 6 books so consensus reaches full weight (no shrinkage, no threshold scaling)
 			{Name: "DraftKings", Moneyline: &api.Moneyline{Home: -150, Away: 130}},  // weight 1.5
 			{Name: "Bet365", Moneyline: &api.Moneyline{Home: -148, Away: 128}},      // weight 1.3
 			{Name: "FanDuel", Moneyline: &api.Moneyline{Home: -152, Away: 132}},     // weight 1.0
+			{Name: "BetMGM", Moneyline: &api.Moneyline{Home: -149, Away: 129}},      // weight 0.7
+			{Name: "Caesars", Moneyline: &api.Moneyline{Home: -151, Away: 131}},     // weight 1.0
+			{Name: "PointsBet", Moneyline: &api.Moneyline{Home: -147, Away: 127}},   // weight 1.0
 			// But Kalshi prices home at only 50% (major mispricing!)
 			{Name: "Kalshi", Moneyline: &api.Moneyline{Home: -100, Away: -100}},
 		},
