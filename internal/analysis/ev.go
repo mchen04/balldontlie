@@ -1,6 +1,8 @@
 package analysis
 
 import (
+	"math"
+
 	"sports-betting-bot/internal/kalshi"
 	"sports-betting-bot/internal/odds"
 )
@@ -42,15 +44,24 @@ const shrinkFullWeightAt = 6
 
 // ShrinkToward blends observed toward prior based on book count.
 // At fullWeightAt books or more, returns observed unchanged.
-// Below fullWeightAt, blends linearly toward prior.
+// Below fullWeightAt, applies power-law shrinkage (exponent 1.5) which is
+// more aggressive at very low book counts than linear interpolation.
+//
+// Weight curve (fullWeightAt=6):
+//
+//	6 books → weight 1.000 (no shrinkage)
+//	5 books → weight 0.760
+//	4 books → weight 0.544
+//	3 books → weight 0.354
+//	2 books → weight 0.192
+//	1 book  → weight 0.068
 func ShrinkToward(observed, prior float64, bookCount, fullWeightAt int) float64 {
-	gap := fullWeightAt - bookCount
-	if gap <= 0 {
+	if bookCount >= fullWeightAt {
 		return observed
 	}
-	n := float64(bookCount)
-	g := float64(gap)
-	return (n*observed + g*prior) / (n + g)
+	ratio := float64(bookCount) / float64(fullWeightAt)
+	weight := math.Pow(ratio, 1.5)
+	return weight*observed + (1-weight)*prior
 }
 
 // ScaledEVThreshold raises the EV threshold when book count is low.

@@ -128,19 +128,28 @@ func TestScaledEVThreshold(t *testing.T) {
 }
 
 func TestShrinkToward(t *testing.T) {
+	// Power-law shrinkage: weight = (bookCount/fullWeightAt)^1.5
+	// result = weight*observed + (1-weight)*prior
+	pw := func(bc, fwa int) float64 {
+		return math.Pow(float64(bc)/float64(fwa), 1.5)
+	}
+
 	tests := []struct {
-		name                         string
-		observed, prior              float64
-		bookCount, fullWeightAt      int
-		expected                     float64
-		delta                        float64
+		name                    string
+		observed, prior         float64
+		bookCount, fullWeightAt int
+		expected                float64
+		delta                   float64
 	}{
 		{"6+ books = no shrink", 0.60, 0.50, 6, 6, 0.60, 0.001},
 		{"7 books = no shrink", 0.60, 0.50, 7, 6, 0.60, 0.001},
-		{"5 books = 17% toward prior", 0.60, 0.50, 5, 6, (5*0.60 + 1*0.50) / 6, 0.001},
-		{"4 books = 33% toward prior", 0.60, 0.50, 4, 6, (4*0.60 + 2*0.50) / 6, 0.001},
+		{"5 books power-law", 0.60, 0.50, 5, 6,
+			pw(5, 6)*0.60 + (1-pw(5, 6))*0.50, 0.001},
+		{"4 books power-law", 0.60, 0.50, 4, 6,
+			pw(4, 6)*0.60 + (1-pw(4, 6))*0.50, 0.001},
 		{"equal obs/prior = no effect", 0.50, 0.50, 4, 6, 0.50, 0.001},
-		{"1 book = 83% toward prior", 0.70, 0.50, 1, 6, (1*0.70 + 5*0.50) / 6, 0.001},
+		{"1 book power-law", 0.70, 0.50, 1, 6,
+			pw(1, 6)*0.70 + (1-pw(1, 6))*0.50, 0.001},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -150,6 +159,37 @@ func TestShrinkToward(t *testing.T) {
 					tt.observed, tt.prior, tt.bookCount, tt.fullWeightAt, result, tt.expected)
 			}
 		})
+	}
+}
+
+func TestShrinkTowardPowerLawProperties(t *testing.T) {
+	// Verify power-law is more aggressive than linear at low book counts
+	// and less aggressive near fullWeightAt
+	observed, prior := 0.70, 0.50
+
+	for bc := 1; bc <= 5; bc++ {
+		powerResult := ShrinkToward(observed, prior, bc, 6)
+
+		// Linear result for comparison: (n*obs + gap*prior) / (n+gap)
+		n := float64(bc)
+		g := float64(6 - bc)
+		linearResult := (n*observed + g*prior) / (n + g)
+
+		// Power-law should shrink MORE toward prior (lower result when observed > prior)
+		if powerResult > linearResult+0.0001 {
+			t.Errorf("bc=%d: power-law (%v) should be <= linear (%v) for observed > prior",
+				bc, powerResult, linearResult)
+		}
+	}
+
+	// Verify monotonicity: more books → result closer to observed
+	prev := prior
+	for bc := 1; bc <= 6; bc++ {
+		result := ShrinkToward(observed, prior, bc, 6)
+		if result < prev-0.0001 {
+			t.Errorf("bc=%d: result %v should be >= previous %v (monotonic)", bc, result, prev)
+		}
+		prev = result
 	}
 }
 

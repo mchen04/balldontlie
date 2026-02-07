@@ -12,8 +12,8 @@ A 24/7 NBA betting analysis bot written in Go that identifies +EV opportunities 
 
 ## Features
 
-- Multi-book consensus with multiplicative vig removal
-- Spread/total line normalization using normal distribution (σ ≈ 11.5 for NBA)
+- Log-linear opinion pool consensus with winsorized outlier capping and Power method vig removal
+- Spread/total line normalization using Student's t-distribution with context-dependent SD
 - Fee-adjusted EV calculation (accounts for Kalshi's dynamic fee: `0.07 * price * (1-price)`, capped at $0.0175)
 - Order book depth and slippage analysis
 - Arbitrage detection on existing positions

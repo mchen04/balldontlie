@@ -62,9 +62,10 @@ sports-betting-bot/
 
 ### 2. Consensus Calculation
 - Converts American odds to implied probabilities
-- Removes vig using multiplicative method (probabilities sum to 100%)
-- Averages vig-free probabilities across all books
-- Normalizes spread/total probabilities to Kalshi's line using normal distribution (σ ≈ 11.5 for NBA)
+- Removes vig using Power method (accounts for favorite-longshot bias)
+- Combines vig-free probabilities via log-linear opinion pool (logit-space averaging) with winsorized outlier capping
+- Normalizes spread/total probabilities to Kalshi's line using Student's t-distribution with context-dependent SD
+- Applies Bayesian shrinkage toward Kalshi prior when book count < 6
 
 ### 3. Opportunity Detection
 - Compares consensus "true" probability against Kalshi price
@@ -85,7 +86,8 @@ sports-betting-bot/
 - Alerts when hedging can lock in guaranteed profit
 
 ### 6. Duplicate Prevention
-- Positions stored in SQLite **before** order placement
+- In-flight TTL lock (30s) prevents race conditions between concurrent poll cycles
+- Positions stored in SQLite **after** successful order fill (prevents stale entries from failed orders)
 - Each position tracked by full Kalshi ticker + bet side (yes/no)
 - Prevents duplicate bets across scans and across restarts
 - Ticker includes date, so next day's bets are not blocked
@@ -112,9 +114,9 @@ sports-betting-bot/
 │  ┌─────────────────────────────────────────────────┐            │
 │  │              Odds Processor                      │            │
 │  │  • American → Implied probability                │            │
-│  │  • Vig removal (multiplicative)                  │            │
-│  │  • Line normalization (normal CDF)               │            │
-│  │  • Consensus averaging                           │            │
+│  │  • Vig removal (Power method)                     │            │
+│  │  • Line normalization (t-distribution CDF)       │            │
+│  │  • Log-linear consensus with winsorization       │            │
 │  └─────────────────────────┬───────────────────────┘            │
 │                            │                                     │
 │                            ▼                                     │
@@ -158,13 +160,13 @@ sports-betting-bot/
 - **Arb**: Detects and executes guaranteed-profit opportunities
 
 ### `internal/odds` - Probability Engine
-- **Consensus**: Multi-book aggregation with line normalization
+- **Consensus**: Log-linear opinion pool with winsorization and t-distribution line normalization
 - **Convert**: American ↔ Decimal ↔ Implied probability
-- **Vig**: Multiplicative vig removal
+- **Vig**: Power method vig removal (favorite-longshot bias correction)
 
 ### `internal/analysis` - Decision Engine
-- **EV**: Finds +EV opportunities across moneyline, spread, totals, player props
-- **Kelly**: Conservative quarter-Kelly position sizing
+- **EV**: Finds +EV opportunities with Bayesian shrinkage and scaled thresholds
+- **Kelly**: Fee-adjusted quarter-Kelly sizing with liquidity cap
 
 ### `internal/positions` - State Management
 - **DB**: SQLite schema for position tracking
@@ -174,21 +176,26 @@ sports-betting-bot/
 
 ### Spread Line Normalization
 When books have different spread lines (e.g., -5.5 vs -6.0), probabilities are normalized to Kalshi's line:
-- NBA margin vs spread follows N(0, σ) where σ ≈ 11.5 points
-- Each half-point adjustment ≈ 1.7% probability change
-- Uses standard normal CDF for conversion
+- Uses Student's t-distribution (df=7 spreads, df=9 totals) for fat tails
+- Context-dependent σ: 10.5/11.5/12.5 (spreads), 15.5/17.0/18.5 (totals)
+- Each half-point adjustment ≈ 1.7% probability change near 50%
 
-### EV Calculation
+### EV Calculation with Bayesian Shrinkage
 ```
-Raw EV = (trueProb × profit) - ((1 - trueProb) × stake)
-Fee = 0.07 × price × (1 - price), capped at $0.0175
-Adjusted EV = Raw EV - Fee
+1. Shrink consensus toward Kalshi prior: weight = (bookCount/6)^1.5
+   shrunk = weight × consensus + (1-weight) × kalshiPrice
+2. Raw EV = shrunk - kalshiPrice
+3. Fee = 0.07 × price × (1 - price), capped at $0.0175
+4. Adjusted EV = Raw EV - Fee
+5. Threshold = base + 0.01 × max(0, 6 - bookCount)
 ```
 
-### Kelly Criterion
+### Kelly Criterion (Fee-Adjusted)
 ```
-f* = (p × b - q) / b     [full Kelly]
-f  = f* × 0.25           [quarter-Kelly]
+bNet = (1 - price - fee) / (price + fee)
+f* = (p × bNet - q) / bNet     [full Kelly]
+f  = f* × 0.25                 [quarter-Kelly]
+contracts = min(kellyContracts, askDepth)
 ```
 
 ## Configuration

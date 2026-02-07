@@ -47,12 +47,18 @@ FanDuel:    Over 50.0%, Under 50.0%
 BetMGM:     Over 54.5%, Under 45.5%
 ```
 
-### Step 3: Average Probabilities
+### Step 3: Log-Linear Consensus
+
+Probabilities are averaged in **logit space** (log-linear opinion pool) with vendor-specific weights (FanDuel 1.5x, DraftKings 1.2x, BetMGM 0.7x). Outliers are winsorized at ±2σ when 3+ books contribute.
 
 ```
-True Over Probability = (53.5 + 50.0 + 54.5) / 3 = 52.7%
-True Under Probability = (46.5 + 50.0 + 45.5) / 3 = 47.3%
+logit(p) = log(p / (1-p))
+
+avgLogit = Σ(logit(prob_i) × weight_i) / Σ(weight_i)
+consensus = 1 / (1 + exp(-avgLogit))
 ```
+
+This amplifies confident signals compared to arithmetic averaging.
 
 ---
 
@@ -94,19 +100,35 @@ Step 3: Compare to Kalshi:
         EV = 72% - 70% = +2%
 ```
 
-### Distribution Parameters
+### Distribution Models
 
-For points, we use:
+**Points** use a normal distribution with CV calibrated by scoring volume:
 ```
-mean = estimated from consensus
-r = shape parameter (controls variance)
-    Typical: r ≈ 5-10 for NBA player points
+mean > 25:  σ = 0.38 × mean
+15-25:      σ = 0.35 × mean
+≤ 15:       σ = 0.40 × mean
 ```
 
-The CDF gives us P(X ≤ line), so:
+**Counting stats** (rebounds, assists, threes, blocks, steals) use a **Negative Binomial** distribution with prop-type-specific dispersion:
 ```
-P(over line) = 1 - CDF(line)
-P(under line) = CDF(line)
+rebounds: r = 3.3 × mean  (Var ≈ 1.30 × mean)
+assists:  r = 2.5 × mean  (Var ≈ 1.40 × mean)
+threes:   r = 2.0 × mean  (Var ≈ 1.50 × mean)
+steals:   r = 2.0 × mean  (Var ≈ 1.50 × mean)
+blocks:   r = 1.5 × mean  (Var ≈ 1.67 × mean)
+```
+
+A **two-pass estimation** refines the SD/dispersion parameter: the first pass uses the book line as a proxy for the mean, then the inferred mean from pass 1 is used to recalibrate the dispersion for pass 2.
+
+**CDF computation** for the negative binomial uses `P(X ≥ k) = 1 - I_p(r, k)` via the regularized incomplete beta function — O(1) instead of O(k) PMF summation.
+
+### Multi-Line Logit Averaging
+
+When multiple book lines are available for the same prop, each is independently shifted to Kalshi's line, then averaged in **logit space** for consistency with the consensus pooling method:
+
+```
+shiftedProb_i = EstimateProbabilityAtLine(bdlLine_i, bdlProb_i, kalshiLine)
+result = sigmoid( Σ logit(shiftedProb_i) / count )
 ```
 
 ---
@@ -174,10 +196,21 @@ fee = 0.07 × kalshiPrice × (1 - kalshiPrice), capped at 0.0175
 adjustedEV = rawEV - fee
 ```
 
+### Bayesian Shrinkage & Scaled Threshold
+
+When fewer than 6 books contribute to the prop consensus, the same power-law shrinkage used for game markets is applied:
+
+```
+weight = (bookCount / 6) ^ 1.5
+shrunk = weight × consensus + (1 - weight) × kalshiPrice
+```
+
+The EV threshold also scales: +1% per missing book below 6.
+
 ### Minimum Requirements
 
 - At least 4 sportsbooks in consensus (`MinBookCount`)
-- Adjusted EV ≥ 3% (`EVThreshold`)
+- Adjusted EV ≥ scaled threshold (3% base + 1% per missing book below 6)
 - Kalshi has liquidity at the line
 
 ---

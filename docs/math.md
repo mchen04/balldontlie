@@ -227,29 +227,49 @@ contracts = 500 / 50 = 10 contracts
 
 When sportsbooks offer different lines (e.g., spread -5.5 vs -6.0), we normalize probabilities to compare against Kalshi's line.
 
-### NBA Point Spread Distribution
+### Fat-Tailed Distribution (Student's t)
 
-NBA margin of victory vs. the spread follows approximately:
+NBA ATS margins exhibit excess kurtosis (~3.7 vs. normal's 3.0), meaning extreme outcomes occur more often than a normal distribution predicts. We use **Student's t-distribution** to account for these fat tails:
+
+- **Spreads**: df = 7 (`NBASpreadDF`)
+- **Totals**: df = 9 (`NBATotalDF`)
+
+### Context-Dependent Standard Deviation
+
+Standard deviation varies with the magnitude of the line:
+
+**Spreads** (`spreadSD`):
 ```
-N(0, σ) where σ ≈ 11.5 points (spreads)
+|spread| ≤ 3:  σ = 10.5 (close games, tighter)
+|spread| ≤ 7:  σ = 11.5 (standard)
+|spread| > 7:  σ = 12.5 (blowouts, more variable)
 ```
 
-For totals (over/under), a wider standard deviation is used:
+**Totals** (`totalSD`):
 ```
-σ ≈ 17.0 points (totals, based on Boyd's Bets O/U margin data, empirical range 15-21)
+totalLine < 215:       σ = 15.5 (low-scoring, tighter)
+215 ≤ totalLine ≤ 230: σ = 17.0 (standard)
+totalLine > 230:       σ = 18.5 (high-pace, more variable)
 ```
-
-Each half-point of spread ≈ 1.7% probability change near 50% (0.5/11.5 ≈ 0.043 SDs). The effect is smaller near extreme probabilities.
 
 ### Normalization Formula
 
 To convert probability at line L1 to probability at line L2:
 
 ```
-Φ = standard normal CDF
-σ = 11.5 (spreads) or 17.0 (totals)
+T     = Student's t CDF (df = 7 for spreads, 9 for totals)
+T⁻¹   = Student's t inverse CDF
+σ     = context-dependent SD (see above)
 
-prob_at_L2 = Φ(Φ⁻¹(prob_at_L1) + (L2 - L1) / σ)
+For spreads:
+  bookT = T⁻¹(prob_at_L1, df)
+  targetT = bookT + (L2 - L1) / σ
+  prob_at_L2 = T(targetT, df)
+
+For totals (sign flipped — higher line is harder to go over):
+  bookT = T⁻¹(prob_at_L1, df)
+  targetT = bookT - (L2 - L1) / σ
+  prob_at_L2 = T(targetT, df)
 ```
 
 ### Example
@@ -257,16 +277,12 @@ prob_at_L2 = Φ(Φ⁻¹(prob_at_L1) + (L2 - L1) / σ)
 ```
 Book offers: Home -5.5 at 52% cover probability
 Kalshi offers: Home -6.0
+σ = 11.5 (|spread| ≤ 7)
 
-L1 = -5.5 (book line), L2 = -6.0 (Kalshi line)
-L2 - L1 = -6.0 - (-5.5) = -0.5
-
-Adjustment: -0.5 / 11.5 = -0.043 standard deviations
-(Negative because -6.0 is harder to cover than -5.5)
-
-Φ⁻¹(0.52) ≈ 0.05
-New z-score = 0.05 + (-0.043) = 0.007
-Φ(0.007) ≈ 0.503
+T⁻¹(0.52, df=7) ≈ 0.0502
+lineDiff = -6.0 - (-5.5) = -0.5
+targetT = 0.0502 + (-0.5 / 11.5) = 0.0502 - 0.0435 = 0.0067
+T(0.0067, df=7) ≈ 0.503
 
 Normalized probability at -6.0: 50.3% (lower, as expected)
 ```
@@ -275,14 +291,62 @@ Normalized probability at -6.0: 50.3% (lower, as expected)
 
 ## Consensus Line Building
 
-Multiple sportsbooks are averaged to form a "true probability" consensus. Each vendor has a market-type-aware weight based on empirical closing-line accuracy (Pikkit 2025 data, Data Golf studies).
+Multiple sportsbooks are combined using a **log-linear opinion pool** (averaging in logit space) to form a "true probability" consensus. Each vendor has a market-type-aware weight based on empirical closing-line accuracy (Pikkit 2025 data, Data Golf studies).
 
 **Game markets** (moneyline/spread/total): DraftKings 1.5x, Bet365 1.3x, BetMGM 0.7x, others 1.0x.
 **Player props**: FanDuel 1.5x, DraftKings 1.2x, BetMGM 0.7x, others 1.0x.
 
+### Log-Linear Opinion Pool
+
 ```
-weighted_avg = Σ(prob_i × weight_i) / Σ(weight_i)
+logit(p) = log(p / (1 - p))
+sigmoid(x) = 1 / (1 + exp(-x))
+
+consensus = sigmoid( Σ(logit(prob_i) × weight_i) / Σ(weight_i) )
 ```
+
+Averaging in logit space amplifies confident signals — a book posting 90% has more influence than one posting 55%, compared to arithmetic averaging.
+
+### Winsorized Outlier Capping
+
+When 3+ books contribute, logits are **winsorized** at ±2σ using a robust estimator:
+
+```
+1. Find median of logits (robust center)
+2. Calculate MAD = mean(|logit_i - median|)
+3. Robust σ = 1.2533 × MAD
+4. Clamp each logit to [median - 2σ, median + 2σ]
+```
+
+This prevents a single outlier book from distorting the consensus.
+
+### Bayesian Shrinkage
+
+When fewer than 6 books contribute, the consensus is **shrunk toward Kalshi's implied probability** using power-law decay:
+
+```
+weight = (bookCount / 6) ^ 1.5
+shrunk = weight × consensus + (1 - weight) × kalshiPrice
+```
+
+| Books | Weight on Consensus |
+|-------|-------------------|
+| 6+ | 100% (no shrinkage) |
+| 5 | 76.0% |
+| 4 | 54.4% |
+| 3 | 35.4% |
+| 2 | 19.2% |
+| 1 | 6.8% |
+
+### Scaled EV Threshold
+
+When fewer books contribute, the EV threshold is raised by +1% per missing book below 6:
+
+```
+threshold = baseEV + 0.01 × max(0, 6 - bookCount)
+```
+
+At 4 books: 3% + 2% = 5% required EV. This prevents marginal trades based on unreliable consensus.
 
 BookCount remains the raw number of contributing books (not weighted).
 
