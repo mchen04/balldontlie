@@ -300,6 +300,71 @@ func (c *KalshiClient) GetMarket(ticker string) (*Market, error) {
 	return &resp.Market, nil
 }
 
+// GetFills fetches all trade fills, paginating through all pages.
+// Pass an empty cursor to start from the beginning.
+func (c *KalshiClient) GetFills() ([]Fill, error) {
+	var allFills []Fill
+	cursor := ""
+
+	for {
+		path := "/portfolio/fills?limit=100"
+		if cursor != "" {
+			path = fmt.Sprintf("%s&cursor=%s", path, cursor)
+		}
+
+		body, err := c.doAuthenticatedRequest(http.MethodGet, path, nil)
+		if err != nil {
+			return nil, fmt.Errorf("fetching fills: %w", err)
+		}
+
+		var resp FillsResponse
+		if err := json.Unmarshal(body, &resp); err != nil {
+			return nil, fmt.Errorf("parsing fills response: %w", err)
+		}
+
+		allFills = append(allFills, resp.Fills...)
+
+		if resp.Cursor == "" {
+			break
+		}
+		cursor = resp.Cursor
+	}
+
+	return allFills, nil
+}
+
+// GetSettlements fetches all settled position results, paginating through all pages.
+func (c *KalshiClient) GetSettlements() ([]Settlement, error) {
+	var allSettlements []Settlement
+	cursor := ""
+
+	for {
+		path := "/portfolio/settlements?limit=100"
+		if cursor != "" {
+			path = fmt.Sprintf("%s&cursor=%s", path, cursor)
+		}
+
+		body, err := c.doAuthenticatedRequest(http.MethodGet, path, nil)
+		if err != nil {
+			return nil, fmt.Errorf("fetching settlements: %w", err)
+		}
+
+		var resp SettlementsResponse
+		if err := json.Unmarshal(body, &resp); err != nil {
+			return nil, fmt.Errorf("parsing settlements response: %w", err)
+		}
+
+		allSettlements = append(allSettlements, resp.Settlements...)
+
+		if resp.Cursor == "" {
+			break
+		}
+		cursor = resp.Cursor
+	}
+
+	return allSettlements, nil
+}
+
 // IsDemo returns true if using demo API
 func (c *KalshiClient) IsDemo() bool {
 	return c.demo

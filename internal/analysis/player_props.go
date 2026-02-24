@@ -29,6 +29,12 @@ func logLinearAvg(overs, unders, weights []float64) (float64, float64) {
 	return a, 1 - a
 }
 
+// BookDetail records one book's vig-removed probability at bet-decision time.
+type BookDetail struct {
+	Vendor   string
+	OverProb float64 // vig-removed probability of OVER (0-1)
+}
+
 // PlayerPropOpportunity represents a +EV player prop opportunity
 type PlayerPropOpportunity struct {
 	GameID       int
@@ -46,20 +52,22 @@ type PlayerPropOpportunity struct {
 	AdjustedEV   float64 // EV after Kalshi fees
 	KellyStake   float64 // Recommended stake fraction
 	BookCount    int     // Number of books in consensus
+	BookDetails  []BookDetail // per-book vig-removed probs, pre-collapse
 	KalshiTicker string  // Full Kalshi market ticker for order execution
 }
 
 // PlayerPropConsensus holds consensus for a single player prop
 type PlayerPropConsensus struct {
-	PlayerID     int
-	PlayerName   string
-	PropType     string
-	Line         float64
-	OverTrueProb float64
-	UnderTrueProb float64
+	PlayerID         int
+	PlayerName       string
+	PropType         string
+	Line             float64
+	OverTrueProb     float64
+	UnderTrueProb    float64
 	KalshiOverPrice  float64
 	KalshiUnderPrice float64
-	BookCount    int
+	BookCount        int
+	BookDetails      []BookDetail // per-book vig-removed probs, pre-collapse
 }
 
 // CalculatePlayerPropConsensus calculates true probability for a player prop
@@ -73,6 +81,7 @@ func CalculatePlayerPropConsensus(props []api.PlayerProp) *PlayerPropConsensus {
 	first := props[0]
 
 	type wp struct {
+		vendor              string
 		over, under, weight float64
 	}
 	var probs []wp
@@ -100,7 +109,7 @@ func CalculatePlayerPropConsensus(props []api.PlayerProp) *PlayerPropConsensus {
 		// Remove vig for other books using Power method (accounts for FLB bias)
 		overProb, underProb := odds.RemoveVigPowerFromAmerican(prop.Market.OverOdds, prop.Market.UnderOdds)
 		if overProb > 0 && underProb > 0 {
-			probs = append(probs, wp{overProb, underProb, api.VendorPropWeight(prop.Vendor)})
+			probs = append(probs, wp{prop.Vendor, overProb, underProb, api.VendorPropWeight(prop.Vendor)})
 		}
 	}
 
@@ -119,6 +128,11 @@ func CalculatePlayerPropConsensus(props []api.PlayerProp) *PlayerPropConsensus {
 	}
 	overProb, underProb := logLinearAvg(overs, unders, weights)
 
+	details := make([]BookDetail, len(probs))
+	for i, p := range probs {
+		details[i] = BookDetail{Vendor: p.vendor, OverProb: p.over}
+	}
+
 	// Player name not included in v2 API, use ID as placeholder
 	playerName := fmt.Sprintf("Player_%d", first.PlayerID)
 
@@ -132,6 +146,7 @@ func CalculatePlayerPropConsensus(props []api.PlayerProp) *PlayerPropConsensus {
 		KalshiOverPrice:  kalshiOverPrice,
 		KalshiUnderPrice: kalshiUnderPrice,
 		BookCount:        len(probs),
+		BookDetails:      details,
 	}
 }
 
@@ -184,6 +199,7 @@ func FindPlayerPropOpportunities(
 					AdjustedEV:  adjEV,
 					KellyStake:  CalculateKelly(overProb, consensus.KalshiOverPrice, cfg.KellyFraction),
 					BookCount:   bc,
+					BookDetails: consensus.BookDetails,
 				})
 			}
 		}
@@ -208,6 +224,7 @@ func FindPlayerPropOpportunities(
 					AdjustedEV:  adjEV,
 					KellyStake:  CalculateKelly(underProb, consensus.KalshiUnderPrice, cfg.KellyFraction),
 					BookCount:   bc,
+					BookDetails: consensus.BookDetails,
 				})
 			}
 		}
@@ -329,6 +346,7 @@ func FindPlayerPropOpportunitiesWithKalshi(
 					AdjustedEV:   adjEV,
 					KellyStake:   CalculateKelly(overProb, kalshiOverPrice, cfg.KellyFraction),
 					BookCount:    bc,
+					BookDetails:  consensus.BookDetails,
 					KalshiTicker: matchedKalshi.Ticker,
 				})
 			}
@@ -354,6 +372,7 @@ func FindPlayerPropOpportunitiesWithKalshi(
 					AdjustedEV:   adjEV,
 					KellyStake:   CalculateKelly(underProb, kalshiUnderPrice, cfg.KellyFraction),
 					BookCount:    bc,
+					BookDetails:  consensus.BookDetails,
 					KalshiTicker: matchedKalshi.Ticker,
 				})
 			}
@@ -549,6 +568,7 @@ func calculateBDLConsensus(props []api.PlayerProp) *PlayerPropConsensus {
 	first := props[0]
 
 	type weightedProb struct {
+		vendor              string
 		over, under, weight float64
 	}
 	var probs []weightedProb
@@ -572,7 +592,7 @@ func calculateBDLConsensus(props []api.PlayerProp) *PlayerPropConsensus {
 		// Remove vig using Power method (accounts for FLB bias)
 		overProb, underProb := odds.RemoveVigPowerFromAmerican(prop.Market.OverOdds, prop.Market.UnderOdds)
 		if overProb > 0 && underProb > 0 {
-			probs = append(probs, weightedProb{overProb, underProb, api.VendorPropWeight(prop.Vendor)})
+			probs = append(probs, weightedProb{prop.Vendor, overProb, underProb, api.VendorPropWeight(prop.Vendor)})
 		}
 	}
 
@@ -590,6 +610,11 @@ func calculateBDLConsensus(props []api.PlayerProp) *PlayerPropConsensus {
 	}
 	overProb, underProb := logLinearAvg(overs, unders, weights)
 
+	details := make([]BookDetail, len(probs))
+	for i, p := range probs {
+		details[i] = BookDetail{Vendor: p.vendor, OverProb: p.over}
+	}
+
 	return &PlayerPropConsensus{
 		PlayerID:      first.PlayerID,
 		PlayerName:    fmt.Sprintf("Player_%d", first.PlayerID),
@@ -598,5 +623,6 @@ func calculateBDLConsensus(props []api.PlayerProp) *PlayerPropConsensus {
 		OverTrueProb:  overProb,
 		UnderTrueProb: underProb,
 		BookCount:     len(probs),
+		BookDetails:   details,
 	}
 }

@@ -231,6 +231,46 @@ type PlayerPropMarket struct {
 	Teams      string  // e.g., "BOSHOU"
 }
 
+// Trade History & Settlements
+
+// Fill represents a single trade fill from GET /portfolio/fills
+// Per docs: https://docs.kalshi.com/api-reference/portfolio/get-fills
+type Fill struct {
+	FillID    string      `json:"fill_id"`
+	Ticker    string      `json:"ticker"`
+	Side      Side        `json:"side"`      // "yes" or "no"
+	Action    OrderAction `json:"action"`    // "buy" or "sell"
+	Count     int         `json:"count"`     // contracts filled
+	YesPrice  int         `json:"yes_price"` // price in cents (1–99)
+	CreatedAt string      `json:"created_time"`
+	IsTaker   bool        `json:"is_taker"`
+}
+
+// FillsResponse from GET /portfolio/fills
+type FillsResponse struct {
+	Fills  []Fill `json:"fills"`
+	Cursor string `json:"cursor"`
+}
+
+// Settlement represents a resolved position from GET /portfolio/settlements
+// Per docs: https://docs.kalshi.com/api-reference/portfolio/get-settlements
+type Settlement struct {
+	Ticker         string `json:"ticker"`
+	SettledTime    string `json:"settled_time"`
+	NoCount        int    `json:"no_count"`
+	NoTotalCost    int    `json:"no_total_cost"`
+	YesCount       int    `json:"yes_count"`
+	YesTotalCost   int    `json:"yes_total_cost"`
+	Revenue        int    `json:"revenue"`        // payout in cents
+	MarketResult   string `json:"market_result"`  // "yes" or "no"
+}
+
+// SettlementsResponse from GET /portfolio/settlements
+type SettlementsResponse struct {
+	Settlements []Settlement `json:"settlements"`
+	Cursor      string       `json:"cursor"`
+}
+
 // Execution Results (internal types for order execution flow)
 
 // LiquidityCheck result from CheckLiquidity

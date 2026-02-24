@@ -25,8 +25,13 @@ coverage.out
 *.test
 test_logs/
 
+# Analysis logs (data snapshots, never commit)
+logs/*.db
+logs/*.json
+
 # Debug/test tools
 debug_matching
 test_full
 test_distribution
 line_research
+/analyze_results

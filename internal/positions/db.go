@@ -10,17 +10,18 @@ import (
 
 // Position represents a Kalshi position
 type Position struct {
-	ID         int64
-	GameID     string
-	HomeTeam   string
-	AwayTeam   string
-	MarketType string // "moneyline", "spread", "total", "prop_points", etc.
-	Side       string // "home", "away", "over", "under", or player-specific
-	Ticker     string // Full Kalshi ticker (e.g., "KXNBAPTS-26FEB05GSWPHX-GSWDGREEN23-10")
-	BetSide    string // "yes" or "no" for duplicate prevention
-	EntryPrice float64
-	Contracts  int
-	CreatedAt  time.Time
+	ID          int64
+	GameID      string
+	HomeTeam    string
+	AwayTeam    string
+	MarketType  string // "moneyline", "spread", "total", "prop_points", etc.
+	Side        string // "home", "away", "over", "under", or player-specific
+	Ticker      string // Full Kalshi ticker (e.g., "KXNBAPTS-26FEB05GSWPHX-GSWDGREEN23-10")
+	BetSide     string // "yes" or "no" for duplicate prevention
+	EntryPrice  float64
+	Contracts   int
+	BookSources string    // JSON: per-book over probs at decision time
+	CreatedAt   time.Time
 }
 
 // DB handles position storage
@@ -73,6 +74,7 @@ func createTables(db *sql.DB) error {
 	migrations := []string{
 		"ALTER TABLE positions ADD COLUMN ticker TEXT DEFAULT ''",
 		"ALTER TABLE positions ADD COLUMN bet_side TEXT DEFAULT ''",
+		"ALTER TABLE positions ADD COLUMN book_sources TEXT DEFAULT ''",
 	}
 
 	for _, migration := range migrations {
@@ -91,9 +93,9 @@ func (d *DB) Close() error {
 // AddPosition adds a new position
 func (d *DB) AddPosition(pos Position) (int64, error) {
 	result, err := d.db.Exec(`
-		INSERT INTO positions (game_id, home_team, away_team, market_type, side, ticker, bet_side, entry_price, contracts)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, pos.GameID, pos.HomeTeam, pos.AwayTeam, pos.MarketType, pos.Side, pos.Ticker, pos.BetSide, pos.EntryPrice, pos.Contracts)
+		INSERT INTO positions (game_id, home_team, away_team, market_type, side, ticker, bet_side, entry_price, contracts, book_sources)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, pos.GameID, pos.HomeTeam, pos.AwayTeam, pos.MarketType, pos.Side, pos.Ticker, pos.BetSide, pos.EntryPrice, pos.Contracts, pos.BookSources)
 	if err != nil {
 		return 0, fmt.Errorf("inserting position: %w", err)
 	}
@@ -119,13 +121,13 @@ func (d *DB) HasPositionOnTicker(ticker, betSide string) (bool, error) {
 // GetPosition retrieves a position by ID
 func (d *DB) GetPosition(id int64) (*Position, error) {
 	row := d.db.QueryRow(`
-		SELECT id, game_id, home_team, away_team, market_type, side, entry_price, contracts, created_at
+		SELECT id, game_id, home_team, away_team, market_type, side, entry_price, contracts, book_sources, created_at
 		FROM positions WHERE id = ?
 	`, id)
 
 	var pos Position
 	err := row.Scan(&pos.ID, &pos.GameID, &pos.HomeTeam, &pos.AwayTeam,
-		&pos.MarketType, &pos.Side, &pos.EntryPrice, &pos.Contracts, &pos.CreatedAt)
+		&pos.MarketType, &pos.Side, &pos.EntryPrice, &pos.Contracts, &pos.BookSources, &pos.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -139,7 +141,7 @@ func (d *DB) GetPosition(id int64) (*Position, error) {
 // GetAllPositions retrieves all positions
 func (d *DB) GetAllPositions() ([]Position, error) {
 	rows, err := d.db.Query(`
-		SELECT id, game_id, home_team, away_team, market_type, side, entry_price, contracts, created_at
+		SELECT id, game_id, home_team, away_team, market_type, side, entry_price, contracts, book_sources, created_at
 		FROM positions
 		ORDER BY created_at DESC
 	`)
@@ -152,7 +154,7 @@ func (d *DB) GetAllPositions() ([]Position, error) {
 	for rows.Next() {
 		var pos Position
 		if err := rows.Scan(&pos.ID, &pos.GameID, &pos.HomeTeam, &pos.AwayTeam,
-			&pos.MarketType, &pos.Side, &pos.EntryPrice, &pos.Contracts, &pos.CreatedAt); err != nil {
+			&pos.MarketType, &pos.Side, &pos.EntryPrice, &pos.Contracts, &pos.BookSources, &pos.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scanning position row: %w", err)
 		}
 		positions = append(positions, pos)
@@ -164,7 +166,7 @@ func (d *DB) GetAllPositions() ([]Position, error) {
 // GetPositionsByGame retrieves positions for a specific game
 func (d *DB) GetPositionsByGame(gameID string) ([]Position, error) {
 	rows, err := d.db.Query(`
-		SELECT id, game_id, home_team, away_team, market_type, side, entry_price, contracts, created_at
+		SELECT id, game_id, home_team, away_team, market_type, side, entry_price, contracts, book_sources, created_at
 		FROM positions
 		WHERE game_id = ?
 		ORDER BY created_at DESC
@@ -178,7 +180,7 @@ func (d *DB) GetPositionsByGame(gameID string) ([]Position, error) {
 	for rows.Next() {
 		var pos Position
 		if err := rows.Scan(&pos.ID, &pos.GameID, &pos.HomeTeam, &pos.AwayTeam,
-			&pos.MarketType, &pos.Side, &pos.EntryPrice, &pos.Contracts, &pos.CreatedAt); err != nil {
+			&pos.MarketType, &pos.Side, &pos.EntryPrice, &pos.Contracts, &pos.BookSources, &pos.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scanning position row: %w", err)
 		}
 		positions = append(positions, pos)

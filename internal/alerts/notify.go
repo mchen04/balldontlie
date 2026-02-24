@@ -71,11 +71,21 @@ func (n *Notifier) AlertPlayerProp(opp analysis.PlayerPropOpportunity) {
 		return
 	}
 
-	log.Printf("+EV PROP: %s %s %.0f %s (%s@%s) | prob=%.1f%%/%dbk kalshi=$%.2f ev=%.2f%% kelly=%.1f%%",
+	var bookParts []string
+	for _, bd := range opp.BookDetails {
+		bookParts = append(bookParts, fmt.Sprintf("%s:%.1f%%", bd.Vendor, bd.OverProb*100))
+	}
+	bookSuffix := ""
+	if len(bookParts) > 0 {
+		bookSuffix = " | " + strings.Join(bookParts, " ")
+	}
+
+	log.Printf("+EV PROP: %s %s %.0f %s (%s@%s) | prob=%.1f%%/%dbk kalshi=$%.2f ev=%.2f%% kelly=%.1f%%%s",
 		opp.PlayerName, strings.ToUpper(opp.Side), opp.Line, opp.PropType,
 		opp.AwayTeam, opp.HomeTeam,
 		opp.TrueProb*100, opp.BookCount,
 		opp.KalshiPrice, opp.AdjustedEV*100, opp.KellyStake*100,
+		bookSuffix,
 	)
 }
 

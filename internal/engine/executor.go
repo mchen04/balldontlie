@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -63,8 +64,9 @@ type TradeParams struct {
 	HomeTeam     string
 	AwayTeam     string
 	MarketType   string
-	PositionSide string // e.g. "home", "away", "over", "under", or player-specific
-	LogPrefix    string // "GAME" or "PROP"
+	PositionSide string               // e.g. "home", "away", "over", "under", or player-specific
+	LogPrefix    string               // "GAME" or "PROP"
+	BookDetails  []analysis.BookDetail // per-book vig-removed probs at decision time
 }
 
 // TradeParamsFromOpportunity builds TradeParams from a game opportunity.
@@ -114,6 +116,7 @@ func TradeParamsFromPropOpportunity(opp analysis.PlayerPropOpportunity) TradePar
 		MarketType:   fmt.Sprintf("prop_%s", opp.PropType),
 		PositionSide: fmt.Sprintf("%s_%s_%.1f", opp.PlayerName, opp.Side, opp.Line),
 		LogPrefix:    "PROP",
+		BookDetails:  opp.BookDetails,
 	}
 }
 
@@ -308,16 +311,23 @@ func ExecuteTrade(
 
 		// Store position AFTER successful fill (prevents stale DB entries from failed orders)
 		if db != nil {
+			bookSourcesJSON := ""
+			if len(tp.BookDetails) > 0 {
+				if b, err := json.Marshal(tp.BookDetails); err == nil {
+					bookSourcesJSON = string(b)
+				}
+			}
 			pos := positions.Position{
-				GameID:     fmt.Sprintf("%d", tp.GameID),
-				HomeTeam:   tp.HomeTeam,
-				AwayTeam:   tp.AwayTeam,
-				MarketType: tp.MarketType,
-				Side:       tp.PositionSide,
-				Ticker:     tp.Ticker,
-				BetSide:    tp.BetSide,
-				EntryPrice: result.AveragePrice / 100,
-				Contracts:  result.FilledContracts,
+				GameID:      fmt.Sprintf("%d", tp.GameID),
+				HomeTeam:    tp.HomeTeam,
+				AwayTeam:    tp.AwayTeam,
+				MarketType:  tp.MarketType,
+				Side:        tp.PositionSide,
+				Ticker:      tp.Ticker,
+				BetSide:     tp.BetSide,
+				EntryPrice:  result.AveragePrice / 100,
+				Contracts:   result.FilledContracts,
+				BookSources: bookSourcesJSON,
 			}
 			id, dbErr := db.AddPosition(pos)
 			if dbErr != nil {
