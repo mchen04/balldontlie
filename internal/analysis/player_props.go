@@ -2,6 +2,7 @@ package analysis
 
 import (
 	"fmt"
+	"math"
 
 	"sports-betting-bot/internal/api"
 	"sports-betting-bot/internal/kalshi"
@@ -401,10 +402,11 @@ func FindPlayerPropOpportunitiesWithInterpolation(
 		PropType string
 	}
 	type lineData struct {
-		Line      float64
-		OverProb  float64
-		UnderProb float64
-		BookCount int
+		Line        float64
+		OverProb    float64
+		UnderProb   float64
+		BookCount   int
+		BookDetails []BookDetail
 	}
 	playerProps := make(map[playerPropKey][]lineData)
 
@@ -437,10 +439,11 @@ func FindPlayerPropOpportunitiesWithInterpolation(
 
 		ppKey := playerPropKey{PlayerID: key.PlayerID, PropType: key.PropType}
 		playerProps[ppKey] = append(playerProps[ppKey], lineData{
-			Line:      key.Line,
-			OverProb:  consensus.OverTrueProb,
-			UnderProb: consensus.UnderTrueProb,
-			BookCount: consensus.BookCount,
+			Line:        key.Line,
+			OverProb:    consensus.OverTrueProb,
+			UnderProb:   consensus.UnderTrueProb,
+			BookCount:   consensus.BookCount,
+			BookDetails: consensus.BookDetails,
 		})
 	}
 
@@ -475,6 +478,27 @@ func FindPlayerPropOpportunitiesWithInterpolation(
 				totalBooks += ld.BookCount
 			}
 			avgBooks := totalBooks / len(lines)
+
+			// Collect BookDetails across all BDL lines, deduplicating by vendor.
+			// When the same vendor appears at multiple lines, keep the entry from the
+			// BDL line closest to the Kalshi line (most representative probability).
+			type vendorBest struct {
+				detail   BookDetail
+				lineDist float64
+			}
+			bestByVendor := make(map[string]vendorBest)
+			for _, ld := range lines {
+				dist := math.Abs(ld.Line - km.Line)
+				for _, bd := range ld.BookDetails {
+					if prev, exists := bestByVendor[bd.Vendor]; !exists || dist < prev.lineDist {
+						bestByVendor[bd.Vendor] = vendorBest{detail: bd, lineDist: dist}
+					}
+				}
+			}
+			mergedBookDetails := make([]BookDetail, 0, len(bestByVendor))
+			for _, vb := range bestByVendor {
+				mergedBookDetails = append(mergedBookDetails, vb.detail)
+			}
 
 			// Use distribution interpolation to estimate probability at Kalshi line
 			kalshiLine := km.Line
@@ -523,6 +547,7 @@ func FindPlayerPropOpportunitiesWithInterpolation(
 						AdjustedEV:   adjEV,
 						KellyStake:   CalculateKelly(overProb, kalshiOverPrice, cfg.KellyFraction),
 						BookCount:    avgBooks,
+						BookDetails:  mergedBookDetails,
 						KalshiTicker: km.Ticker,
 					})
 				}
@@ -548,6 +573,7 @@ func FindPlayerPropOpportunitiesWithInterpolation(
 						AdjustedEV:   adjEV,
 						KellyStake:   CalculateKelly(underProb, kalshiUnderPrice, cfg.KellyFraction),
 						BookCount:    avgBooks,
+						BookDetails:  mergedBookDetails,
 						KalshiTicker: km.Ticker,
 					})
 				}

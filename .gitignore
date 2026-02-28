@@ -26,8 +26,7 @@ coverage.out
 test_logs/
 
 # Analysis logs (data snapshots, never commit)
-logs/*.db
-logs/*.json
+logs/
 
 # Debug/test tools
 debug_matching
