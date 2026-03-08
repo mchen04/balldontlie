@@ -5,16 +5,20 @@ A 24/7 NBA betting analysis bot written in Go that identifies +EV opportunities 
 ## How It Works
 
 1. **Polls odds** from 14+ sportsbooks via balldontlie.io (600 req/min)
-2. **Calculates consensus** probabilities with vig removal
-3. **Compares against Kalshi** prices to find +EV opportunities
-4. **Sizes bets** using Kelly criterion (quarter-Kelly default)
-5. **Optionally executes** trades via Kalshi API with RSA authentication
+2. **Calculates consensus** probabilities with vig removal and log-linear pooling
+3. **Filters for freshness** — only uses odds updated within 30 seconds
+4. **Compares against Kalshi** prices to find +EV opportunities
+5. **Rejects longshots** — skips bets where true probability < 15% or > 85%
+6. **Sizes bets** using Kelly criterion (quarter-Kelly default)
+7. **Optionally executes** trades via Kalshi API with RSA authentication
 
 ## Features
 
 - Log-linear opinion pool consensus with winsorized outlier capping and Power method vig removal
 - Spread/total line normalization using Student's t-distribution with context-dependent SD
 - Fee-adjusted EV calculation (accounts for Kalshi's dynamic fee: `0.07 * price * (1-price)`, capped at $0.0175)
+- Longshot filter: skips bets where true probability < 15% or > 85%
+- Staleness filtering: rejects vendor odds older than 30 seconds (game and prop markets)
 - Order book depth and slippage analysis
 - Arbitrage detection on existing positions
 - SQLite position tracking with hedge alerts
@@ -45,6 +49,7 @@ go run ./cmd/bot
 | `KALSHI_PRIVATE_KEY` | optional | RSA private key content (cloud deployment) |
 | `EV_THRESHOLD` | 0.03 | Min EV to alert (3%) |
 | `KELLY_FRACTION` | 0.25 | Fraction of full Kelly |
+| `MAX_ODDS_AGE_SEC` | 30 | Max age of vendor odds in seconds |
 | `AUTO_EXECUTE` | false | Auto-execute trades |
 | `MAX_BET_DOLLARS` | 0 | Max bet size (0 = no cap) |
 | `KALSHI_DEMO` | false | Use demo API |
@@ -60,12 +65,13 @@ See [docs/architecture.md](docs/architecture.md) for full configuration options.
 ## Project Structure
 
 ```
-├── cmd/bot/           # Entry point (~155 lines)
+├── cmd/bot/           # Entry point
 ├── internal/
 │   ├── api/           # balldontlie.io client
 │   ├── kalshi/        # Kalshi API, orderbook, orders
 │   ├── odds/          # Consensus, conversion, vig removal
-│   ├── analysis/      # EV detection, Kelly sizing
+│   ├── analysis/      # EV detection, Kelly sizing, longshot filter
+│   ├── mathutil/      # Logit/sigmoid, t-distribution, beta functions
 │   ├── config/        # Configuration loading & validation
 │   ├── engine/        # Polling loop, trade execution, ticker mapping
 │   ├── positions/     # SQLite tracking, hedge detection

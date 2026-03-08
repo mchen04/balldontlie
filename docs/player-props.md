@@ -207,9 +207,19 @@ shrunk = weight × consensus + (1 - weight) × kalshiPrice
 
 The EV threshold also scales: +1% per missing book below 6.
 
+### Longshot Filter
+
+Before EV comparison, bets are rejected if the (post-shrinkage) true probability falls below 15% or above 85%. This eliminates unprofitable extreme-probability bets where fees consume any edge and estimation error is largest.
+
+### Staleness Filter
+
+Before consensus calculation, `filterFreshProps()` removes any prop whose `UpdatedAt` timestamp is older than `MaxOddsAgeSec` (default 30 seconds). Props with missing or unparseable timestamps are treated as stale and excluded.
+
 ### Minimum Requirements
 
+- All props must pass staleness filter (within `MaxOddsAgeSec`)
 - At least 4 sportsbooks in consensus (`MinBookCount`)
+- True probability within 15-85% range (longshot filter)
 - Adjusted EV ≥ scaled threshold (3% base + 1% per missing book below 6)
 - Kalshi has liquidity at the line
 

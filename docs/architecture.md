@@ -10,7 +10,7 @@ A 24/7 NBA betting analysis bot written in **Go** that identifies +EV opportunit
 
 ```
 sports-betting-bot/
-├── cmd/bot/                    # Entry point (~155 lines)
+├── cmd/bot/                    # Entry point
 │   └── main.go                 # Init, config, startup
 ├── internal/
 │   ├── config/                 # Configuration management
@@ -33,13 +33,17 @@ sports-betting-bot/
 │   │   ├── ticker.go           # Ticker generation (KXNBA*)
 │   │   └── arb.go              # Arbitrage detection
 │   ├── odds/                   # Probability calculations
-│   │   ├── consensus.go        # Multi-book consensus
+│   │   ├── consensus.go        # Multi-book consensus with staleness filtering
 │   │   ├── convert.go          # Odds format conversion
 │   │   └── vig.go              # Vig removal
 │   ├── analysis/               # +EV detection & sizing
-│   │   ├── ev.go               # Opportunity finder
+│   │   ├── ev.go               # Opportunity finder, longshot filter
 │   │   ├── kelly.go            # Kelly criterion
-│   │   └── player_props.go     # Player prop analysis
+│   │   ├── player_props.go     # Player prop analysis with staleness filtering
+│   │   └── distribution.go     # Distribution interpolation
+│   ├── mathutil/               # Math primitives
+│   │   ├── logit.go            # Logit/sigmoid, winsorization
+│   │   └── tdist.go            # Student's t, beta functions
 │   ├── positions/              # Position management
 │   │   ├── db.go               # SQLite storage
 │   │   └── hedge.go            # Hedge detection
@@ -60,39 +64,44 @@ sports-betting-bot/
 - Handles pagination for busy NBA days
 - Automatic retry with exponential backoff on failures
 
-### 2. Consensus Calculation
+### 2. Staleness Filtering
+- **Game odds**: Vendors whose `UpdatedAt` is older than `MaxOddsAgeSec` (default 30s) are excluded from consensus via `isVendorFresh()`
+- **Player props**: `filterFreshProps()` removes all props older than `MaxOddsAgeSec` before consensus calculation
+- Unparseable timestamps default to **stale** (excluded)
+- This ensures the bot only trades on genuinely fresh data
+
+### 3. Consensus Calculation
 - Converts American odds to implied probabilities
 - Removes vig using Power method (accounts for favorite-longshot bias)
 - Combines vig-free probabilities via log-linear opinion pool (logit-space averaging) with winsorized outlier capping
 - Normalizes spread/total probabilities to Kalshi's line using Student's t-distribution with context-dependent SD
 - Applies Bayesian shrinkage toward Kalshi prior when book count < 6
 
-### 3. Opportunity Detection
+### 4. Opportunity Detection
 - Compares consensus "true" probability against Kalshi price
-- Auto-detects Kalshi price format (American odds vs cents)
+- **Longshot filter**: Skips any bet where true probability < 15% or > 85%
 - Calculates fee-adjusted EV (accounts for Kalshi's dynamic fee: `0.07 * price * (1-price)`, capped at $0.0175)
 - Filters opportunities by configurable EV threshold (default 3%)
 - Computes Kelly criterion bet sizing (default quarter-Kelly)
 
-### 4. Order Execution (optional)
+### 5. Order Execution (optional)
 - RSA-PSS signed authentication with Kalshi API
 - Order book depth and liquidity checks
 - Slippage calculation before execution
 - Market and limit order support
 
-### 5. Position Tracking & Hedging
+### 6. Position Tracking & Hedging
 - SQLite database stores Kalshi positions
 - Monitors for arbitrage opportunities on held positions
 - Alerts when hedging can lock in guaranteed profit
 
-### 6. Duplicate Prevention
+### 7. Duplicate Prevention
 - In-flight TTL lock (30s) prevents race conditions between concurrent poll cycles
 - Positions stored in SQLite **after** successful order fill (prevents stale entries from failed orders)
 - Each position tracked by full Kalshi ticker + bet side (yes/no)
 - Prevents duplicate bets across scans and across restarts
-- Ticker includes date, so next day's bets are not blocked
 
-### 7. Player Props Analysis
+### 8. Player Props Analysis
 - Matches BallDontLie player props with Kalshi markets
 - Uses interpolation to compare different lines (e.g., BDL 22.5 pts vs Kalshi 20 pts)
 - Supports points, rebounds, assists, threes, blocks, steals
@@ -112,9 +121,16 @@ sports-betting-bot/
 │                                    │                             │
 │                                    ▼                             │
 │  ┌─────────────────────────────────────────────────┐            │
+│  │              Staleness Filter                    │            │
+│  │  • Reject vendor odds older than 30s             │            │
+│  │  • Reject props with unparseable timestamps      │            │
+│  └─────────────────────────┬───────────────────────┘            │
+│                            │                                     │
+│                            ▼                                     │
+│  ┌─────────────────────────────────────────────────┐            │
 │  │              Odds Processor                      │            │
 │  │  • American → Implied probability                │            │
-│  │  • Vig removal (Power method)                     │            │
+│  │  • Vig removal (Power method)                    │            │
 │  │  • Line normalization (t-distribution CDF)       │            │
 │  │  • Log-linear consensus with winsorization       │            │
 │  └─────────────────────────┬───────────────────────┘            │
@@ -122,8 +138,9 @@ sports-betting-bot/
 │                            ▼                                     │
 │  ┌─────────────────────────────────────────────────┐            │
 │  │            Opportunity Finder                    │            │
-│  │  • Kalshi vs consensus comparison                │            │
+│  │  • Longshot filter (15-85% probability range)    │            │
 │  │  • Fee-adjusted EV calculation                   │            │
+│  │  • Bayesian shrinkage + scaled threshold         │            │
 │  │  • Kelly criterion sizing                        │            │
 │  │  • Arbitrage detection                           │            │
 │  └─────────────────────────┬───────────────────────┘            │
@@ -138,66 +155,6 @@ sports-betting-bot/
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-## Key Modules
-
-### `internal/config` - Configuration
-- **Config**: Loads from `.env` and environment variables with named constants for all defaults
-- **Validate**: Range-checks all config values before startup
-
-### `internal/engine` - Orchestration
-- **Engine**: Main polling loop, scan cycle, shutdown handling (uses `log/slog`)
-- **Executor**: Unified trade execution for both game and player prop opportunities
-- **Ticker**: Maps opportunities to Kalshi market tickers
-
-### `internal/api` - Data Sources
-- **RateLimitedClient**: Token bucket rate limiting with exponential backoff
-- **BallDontLieClient**: Fetches today's odds, player props, handles pagination
-
-### `internal/kalshi` - Market Integration
-- **Client**: RSA-PSS signed requests, balance/positions/orders
-- **OrderBook**: Parses `[[price, count], ...]` format, calculates fill prices
-- **Ticker**: Generates NBA tickers (`KXNBAGAME-26FEB04MEMSAC`)
-- **Arb**: Detects and executes guaranteed-profit opportunities
-
-### `internal/odds` - Probability Engine
-- **Consensus**: Log-linear opinion pool with winsorization and t-distribution line normalization
-- **Convert**: American ↔ Decimal ↔ Implied probability
-- **Vig**: Power method vig removal (favorite-longshot bias correction)
-
-### `internal/analysis` - Decision Engine
-- **EV**: Finds +EV opportunities with Bayesian shrinkage and scaled thresholds
-- **Kelly**: Fee-adjusted quarter-Kelly sizing with liquidity cap
-
-### `internal/positions` - State Management
-- **DB**: SQLite schema for position tracking
-- **Hedge**: Monitors for profitable exit opportunities
-
-## Key Algorithms
-
-### Spread Line Normalization
-When books have different spread lines (e.g., -5.5 vs -6.0), probabilities are normalized to Kalshi's line:
-- Uses Student's t-distribution (df=7 spreads, df=9 totals) for fat tails
-- Context-dependent σ: 10.5/11.5/12.5 (spreads), 15.5/17.0/18.5 (totals)
-- Each half-point adjustment ≈ 1.7% probability change near 50%
-
-### EV Calculation with Bayesian Shrinkage
-```
-1. Shrink consensus toward Kalshi prior: weight = (bookCount/6)^1.5
-   shrunk = weight × consensus + (1-weight) × kalshiPrice
-2. Raw EV = shrunk - kalshiPrice
-3. Fee = 0.07 × price × (1 - price), capped at $0.0175
-4. Adjusted EV = Raw EV - Fee
-5. Threshold = base + 0.01 × max(0, 6 - bookCount)
-```
-
-### Kelly Criterion (Fee-Adjusted)
-```
-bNet = (1 - price - fee) / (price + fee)
-f* = (p × bNet - q) / bNet     [full Kelly]
-f  = f* × 0.25                 [quarter-Kelly]
-contracts = min(kellyContracts, askDepth)
-```
-
 ## Configuration
 
 | Parameter | Default | Description |
@@ -205,6 +162,7 @@ contracts = min(kellyContracts, askDepth)
 | `EV_THRESHOLD` | 3% | Minimum adjusted EV to alert |
 | `KELLY_FRACTION` | 25% | Fraction of full Kelly |
 | `POLL_INTERVAL_MS` | 2000ms | Time between API polls |
+| `MAX_ODDS_AGE_SEC` | 30 | Max vendor odds age in seconds |
 | `AUTO_EXECUTE` | false | Auto-execute trades on Kalshi |
 | `MAX_SLIPPAGE_PCT` | 2% | Max acceptable slippage |
 | `MIN_LIQUIDITY_CONTRACTS` | 1 | Min order book depth |
@@ -226,17 +184,17 @@ contracts = min(kellyContracts, askDepth)
 | **balldontlie.io** | 14+ sportsbook odds | 600 req/min |
 | **Kalshi API** | Prices & execution | 10 write/sec, 100 read/sec |
 
-**Supported Books**: DraftKings, FanDuel, BetMGM, Caesars, Bet365, BetRivers, Betway, Fanatics, Kalshi, and more
+**Supported Books**: DraftKings, FanDuel, BetMGM, Caesars, BetRivers, Betway, Fanatics, BetParx, Kalshi, Polymarket, and more
 
 **Markets**: Moneyline, spread, totals, player props
 
 ## Risk Factors
 
-1. **Odds movement** - Lines may move before execution
-2. **API latency** - Real-time means seconds, not milliseconds
-3. **Kalshi liquidity** - May not get filled at displayed price
-4. **Model assumptions** - Normal distribution is approximation
-5. **Sharp book availability** - Consensus quality depends on data
+1. **BDL data freshness** — BDL claims "real-time" but empirically updates every 30-60+ minutes; 30s staleness filter means the bot only trades when it catches freshly-updated data
+2. **Odds movement** — Lines may move before execution
+3. **Kalshi liquidity** — May not get filled at displayed price
+4. **Model assumptions** — Normal/NegBin distributions are approximations
+5. **Longshot bias** — Props below 15% true probability are filtered out due to systematic overpricing
 
 ## Further Documentation
 

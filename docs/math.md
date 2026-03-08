@@ -352,6 +352,30 @@ BookCount remains the raw number of contributing books (not weighted).
 
 ---
 
+## Longshot Filter
+
+Bets where the true probability falls outside the 15-85% range are rejected. Research on the favorite-longshot bias shows that:
+
+- Below 15%: estimation error exceeds any plausible edge; fees (8-10% of stake at these prices) destroy profitability
+- Above 85%: similar dynamics in reverse; risk/reward is unfavorable
+
+The filter is applied at all 12 opportunity check sites (6 game markets + 6 prop markets) after shrinkage but before EV comparison.
+
+---
+
+## Staleness Filtering
+
+Vendor odds are filtered by freshness before entering consensus calculation:
+
+- **Game odds**: `isVendorFresh()` in `consensus.go` rejects vendors whose `UpdatedAt` exceeds `MaxOddsAgeSec` (default 30 seconds)
+- **Player props**: `filterFreshProps()` in `player_props.go` removes individual props older than `MaxOddsAgeSec`
+- **Parse errors**: Timestamps that can't be parsed default to **stale** (rejected)
+- **Missing timestamps**: Props with empty `UpdatedAt` are treated as stale
+
+This ensures the bot only trades on genuinely fresh data, avoiding phantom edges from stale lines.
+
+---
+
 ## Arbitrage Execution
 
 Arb opportunities (YES + NO < $1 after fees) are executed with both legs placed concurrently to minimize the window for price movement. Partial fills (one leg succeeds, the other fails) are logged as warnings and result in an unhedged position.
