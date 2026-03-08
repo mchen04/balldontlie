@@ -45,6 +45,7 @@ func main() {
 		EVThreshold:   cfg.EVThreshold,
 		KellyFraction: cfg.KellyFraction,
 		MinBookCount:  config.DefaultMinBookCount,
+		MaxOddsAgeSec: cfg.MaxOddsAgeSec,
 	}
 
 	execConfig := kalshi.OrderConfig{

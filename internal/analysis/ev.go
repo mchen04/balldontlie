@@ -12,6 +12,18 @@ type Config struct {
 	EVThreshold   float64 // Minimum EV to flag opportunity (e.g., 0.03 = 3%)
 	KellyFraction float64 // Fraction of Kelly to use (e.g., 0.25 = quarter Kelly)
 	MinBookCount  int     // Minimum number of books required for consensus (default 4)
+	MaxOddsAgeSec int     // Max age of vendor odds in seconds (for prop staleness filtering)
+}
+
+// Longshot filter: skip bets where true probability is outside this range.
+const (
+	MinProbability = 0.15
+	MaxProbability = 0.85
+)
+
+// isLongshot returns true if the probability is outside the safe betting range.
+func isLongshot(prob float64) bool {
+	return prob < MinProbability || prob > MaxProbability
 }
 
 // DefaultConfig returns sensible defaults
@@ -123,7 +135,7 @@ func FindMoneylineOpportunities(consensus odds.ConsensusOdds, cfg Config) []Oppo
 	awayProb := ShrinkToward(consensus.Moneyline.AwayTrueProb, awayKalshiProb, bc, shrinkFullWeightAt)
 
 	// Check home team
-	if homeKalshiProb > 0 {
+	if homeKalshiProb > 0 && !isLongshot(homeProb) {
 		adjEV := CalculateAdjustedEV(homeProb, homeKalshiProb)
 		if adjEV >= ScaledEVThreshold(cfg.EVThreshold, bc) {
 			opps = append(opps, Opportunity{
@@ -144,7 +156,7 @@ func FindMoneylineOpportunities(consensus odds.ConsensusOdds, cfg Config) []Oppo
 	}
 
 	// Check away team
-	if awayKalshiProb > 0 {
+	if awayKalshiProb > 0 && !isLongshot(awayProb) {
 		adjEV := CalculateAdjustedEV(awayProb, awayKalshiProb)
 		if adjEV >= ScaledEVThreshold(cfg.EVThreshold, bc) {
 			opps = append(opps, Opportunity{
@@ -193,7 +205,7 @@ func FindSpreadOpportunities(consensus odds.ConsensusOdds, cfg Config) []Opportu
 	awayCoverProb := ShrinkToward(consensus.Spread.AwayCoverProb, awayCoverKalshi, bc, shrinkFullWeightAt)
 
 	// Check home cover
-	if homeCoverKalshi > 0 {
+	if homeCoverKalshi > 0 && !isLongshot(homeCoverProb) {
 		adjEV := CalculateAdjustedEV(homeCoverProb, homeCoverKalshi)
 		if adjEV >= ScaledEVThreshold(cfg.EVThreshold, bc) {
 			opps = append(opps, Opportunity{
@@ -214,7 +226,7 @@ func FindSpreadOpportunities(consensus odds.ConsensusOdds, cfg Config) []Opportu
 	}
 
 	// Check away cover
-	if awayCoverKalshi > 0 {
+	if awayCoverKalshi > 0 && !isLongshot(awayCoverProb) {
 		adjEV := CalculateAdjustedEV(awayCoverProb, awayCoverKalshi)
 		if adjEV >= ScaledEVThreshold(cfg.EVThreshold, bc) {
 			opps = append(opps, Opportunity{
@@ -263,7 +275,7 @@ func FindTotalOpportunities(consensus odds.ConsensusOdds, cfg Config) []Opportun
 	underProb := ShrinkToward(consensus.Total.UnderProb, underKalshi, bc, shrinkFullWeightAt)
 
 	// Check over
-	if overKalshi > 0 {
+	if overKalshi > 0 && !isLongshot(overProb) {
 		adjEV := CalculateAdjustedEV(overProb, overKalshi)
 		if adjEV >= ScaledEVThreshold(cfg.EVThreshold, bc) {
 			opps = append(opps, Opportunity{
@@ -284,7 +296,7 @@ func FindTotalOpportunities(consensus odds.ConsensusOdds, cfg Config) []Opportun
 	}
 
 	// Check under
-	if underKalshi > 0 {
+	if underKalshi > 0 && !isLongshot(underProb) {
 		adjEV := CalculateAdjustedEV(underProb, underKalshi)
 		if adjEV >= ScaledEVThreshold(cfg.EVThreshold, bc) {
 			opps = append(opps, Opportunity{

@@ -95,7 +95,7 @@ func isVendorFresh(vendor api.Vendor, maxAgeSec int) bool {
 	if err != nil {
 		t, err = time.Parse("2006-01-02T15:04:05Z", vendor.UpdatedAt)
 		if err != nil {
-			return true // Can't parse, assume fresh
+			return false // Can't parse, assume stale
 		}
 	}
 	return time.Since(t) <= time.Duration(maxAgeSec)*time.Second

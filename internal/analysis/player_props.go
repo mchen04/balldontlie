@@ -3,12 +3,40 @@ package analysis
 import (
 	"fmt"
 	"math"
+	"time"
 
 	"sports-betting-bot/internal/api"
 	"sports-betting-bot/internal/kalshi"
 	"sports-betting-bot/internal/mathutil"
 	"sports-betting-bot/internal/odds"
 )
+
+// filterFreshProps removes props whose UpdatedAt is older than maxAgeSec.
+// If maxAgeSec <= 0, no filtering is applied.
+func filterFreshProps(props []api.PlayerProp, maxAgeSec int) []api.PlayerProp {
+	if maxAgeSec <= 0 {
+		return props
+	}
+	cutoff := time.Duration(maxAgeSec) * time.Second
+	now := time.Now()
+	var fresh []api.PlayerProp
+	for _, p := range props {
+		if p.UpdatedAt == "" {
+			continue // no timestamp = assume stale
+		}
+		t, err := time.Parse(time.RFC3339, p.UpdatedAt)
+		if err != nil {
+			t, err = time.Parse("2006-01-02T15:04:05Z", p.UpdatedAt)
+			if err != nil {
+				continue // unparseable = assume stale
+			}
+		}
+		if now.Sub(t) <= cutoff {
+			fresh = append(fresh, p)
+		}
+	}
+	return fresh
+}
 
 // logLinearAvg averages (over, under) probability pairs in logit space.
 // Applies winsorization (±2σ) when 3+ books to cap outlier influence.
@@ -160,6 +188,9 @@ func FindPlayerPropOpportunities(
 ) []PlayerPropOpportunity {
 	var opportunities []PlayerPropOpportunity
 
+	// Filter stale props before processing
+	props = filterFreshProps(props, cfg.MaxOddsAgeSec)
+
 	// Group props by player+propType+line
 	grouped := groupPlayerProps(props)
 
@@ -181,7 +212,7 @@ func FindPlayerPropOpportunities(
 		underProb := ShrinkToward(consensus.UnderTrueProb, consensus.KalshiUnderPrice, bc, shrinkFullWeightAt)
 
 		// Check OVER opportunity
-		if consensus.KalshiOverPrice > 0 {
+		if consensus.KalshiOverPrice > 0 && !isLongshot(overProb) {
 			adjEV := CalculateAdjustedEV(overProb, consensus.KalshiOverPrice)
 			if adjEV >= ScaledEVThreshold(cfg.EVThreshold, bc) {
 				opportunities = append(opportunities, PlayerPropOpportunity{
@@ -206,7 +237,7 @@ func FindPlayerPropOpportunities(
 		}
 
 		// Check UNDER opportunity
-		if consensus.KalshiUnderPrice > 0 {
+		if consensus.KalshiUnderPrice > 0 && !isLongshot(underProb) {
 			adjEV := CalculateAdjustedEV(underProb, consensus.KalshiUnderPrice)
 			if adjEV >= ScaledEVThreshold(cfg.EVThreshold, bc) {
 				opportunities = append(opportunities, PlayerPropOpportunity{
@@ -269,6 +300,9 @@ func FindPlayerPropOpportunitiesWithKalshi(
 ) []PlayerPropOpportunity {
 	var opportunities []PlayerPropOpportunity
 
+	// Filter stale props before processing
+	bdlProps = filterFreshProps(bdlProps, cfg.MaxOddsAgeSec)
+
 	// Group BDL props by player ID + prop type + line
 	type propKey struct {
 		PlayerID int
@@ -328,7 +362,7 @@ func FindPlayerPropOpportunitiesWithKalshi(
 		underProb := ShrinkToward(consensus.UnderTrueProb, kalshiUnderPrice, bc, shrinkFullWeightAt)
 
 		// Check OVER opportunity (YES on Kalshi)
-		if kalshiOverPrice > 0 && kalshiOverPrice < 1 {
+		if kalshiOverPrice > 0 && kalshiOverPrice < 1 && !isLongshot(overProb) {
 			adjEV := CalculateAdjustedEV(overProb, kalshiOverPrice)
 			if adjEV >= ScaledEVThreshold(cfg.EVThreshold, bc) {
 				opportunities = append(opportunities, PlayerPropOpportunity{
@@ -354,7 +388,7 @@ func FindPlayerPropOpportunitiesWithKalshi(
 		}
 
 		// Check UNDER opportunity (NO on Kalshi)
-		if kalshiUnderPrice > 0 && kalshiUnderPrice < 1 {
+		if kalshiUnderPrice > 0 && kalshiUnderPrice < 1 && !isLongshot(underProb) {
 			adjEV := CalculateAdjustedEV(underProb, kalshiUnderPrice)
 			if adjEV >= ScaledEVThreshold(cfg.EVThreshold, bc) {
 				opportunities = append(opportunities, PlayerPropOpportunity{
@@ -395,6 +429,9 @@ func FindPlayerPropOpportunitiesWithInterpolation(
 	cfg Config,
 ) []PlayerPropOpportunity {
 	var opportunities []PlayerPropOpportunity
+
+	// Filter stale props before processing
+	bdlProps = filterFreshProps(bdlProps, cfg.MaxOddsAgeSec)
 
 	// Group BDL props by player ID + prop type (NOT line - we want all lines for a player)
 	type playerPropKey struct {
@@ -528,7 +565,7 @@ func FindPlayerPropOpportunitiesWithInterpolation(
 			underProb := ShrinkToward(estimatedUnderProb, kalshiUnderPrice, avgBooks, shrinkFullWeightAt)
 
 			// Check OVER opportunity
-			if kalshiOverPrice > 0 && kalshiOverPrice < 1 {
+			if kalshiOverPrice > 0 && kalshiOverPrice < 1 && !isLongshot(overProb) {
 				adjEV := CalculateAdjustedEV(overProb, kalshiOverPrice)
 				if adjEV >= ScaledEVThreshold(cfg.EVThreshold, avgBooks) {
 					opportunities = append(opportunities, PlayerPropOpportunity{
@@ -554,7 +591,7 @@ func FindPlayerPropOpportunitiesWithInterpolation(
 			}
 
 			// Check UNDER opportunity
-			if kalshiUnderPrice > 0 && kalshiUnderPrice < 1 {
+			if kalshiUnderPrice > 0 && kalshiUnderPrice < 1 && !isLongshot(underProb) {
 				adjEV := CalculateAdjustedEV(underProb, kalshiUnderPrice)
 				if adjEV >= ScaledEVThreshold(cfg.EVThreshold, avgBooks) {
 					opportunities = append(opportunities, PlayerPropOpportunity{

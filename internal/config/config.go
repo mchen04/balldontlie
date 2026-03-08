@@ -25,7 +25,7 @@ const (
 	DefaultPreGameSkipWindow      = 1 * time.Minute
 	DefaultMinArbProfitCents      = 0.5
 	DefaultMinArbProfitPct        = 0.005
-	DefaultMaxOddsAgeSec          = 1800 // 30 minutes
+	DefaultMaxOddsAgeSec          = 30 // 30 seconds
 	DefaultTakerFeeCoeff          = 0.07
 	DefaultTakerFeeCap            = 0.0175
 )
