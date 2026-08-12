@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
-	"sports-betting-bot/internal/kalshi"
+	"github.com/mchen04/sports-betting-bot/internal/kalshi"
 )
 
 func main() {

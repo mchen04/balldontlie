@@ -9,13 +9,13 @@ import (
 	"os/signal"
 	"syscall"
 
-	"sports-betting-bot/internal/alerts"
-	"sports-betting-bot/internal/analysis"
-	"sports-betting-bot/internal/api"
-	"sports-betting-bot/internal/config"
-	"sports-betting-bot/internal/engine"
-	"sports-betting-bot/internal/kalshi"
-	"sports-betting-bot/internal/positions"
+	"github.com/mchen04/sports-betting-bot/internal/alerts"
+	"github.com/mchen04/sports-betting-bot/internal/analysis"
+	"github.com/mchen04/sports-betting-bot/internal/api"
+	"github.com/mchen04/sports-betting-bot/internal/config"
+	"github.com/mchen04/sports-betting-bot/internal/engine"
+	"github.com/mchen04/sports-betting-bot/internal/kalshi"
+	"github.com/mchen04/sports-betting-bot/internal/positions"
 )
 
 func main() {

@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"sports-betting-bot/internal/analysis"
-	"sports-betting-bot/internal/odds"
+	"github.com/mchen04/sports-betting-bot/internal/analysis"
+	"github.com/mchen04/sports-betting-bot/internal/odds"
 )
 
 func TestCheckCooldownSuppresses(t *testing.T) {

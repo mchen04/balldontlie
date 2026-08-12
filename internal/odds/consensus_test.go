@@ -4,8 +4,8 @@ import (
 	"math"
 	"testing"
 
-	"sports-betting-bot/internal/api"
-	"sports-betting-bot/internal/mathutil"
+	"github.com/mchen04/sports-betting-bot/internal/api"
+	"github.com/mchen04/sports-betting-bot/internal/mathutil"
 )
 
 func TestNormalizeSpreadProb(t *testing.T) {

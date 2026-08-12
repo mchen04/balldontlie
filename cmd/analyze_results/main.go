@@ -20,7 +20,7 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 
-	"sports-betting-bot/internal/kalshi"
+	"github.com/mchen04/sports-betting-bot/internal/kalshi"
 )
 
 // localPos mirrors columns from the positions table (all columns).

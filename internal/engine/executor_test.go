@@ -3,9 +3,9 @@ package engine
 import (
 	"testing"
 
-	"sports-betting-bot/internal/analysis"
-	"sports-betting-bot/internal/kalshi"
-	"sports-betting-bot/internal/odds"
+	"github.com/mchen04/sports-betting-bot/internal/analysis"
+	"github.com/mchen04/sports-betting-bot/internal/kalshi"
+	"github.com/mchen04/sports-betting-bot/internal/odds"
 )
 
 func TestTradeParamsFromOpportunity(t *testing.T) {

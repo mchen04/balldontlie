@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"sports-betting-bot/internal/analysis"
-	"sports-betting-bot/internal/positions"
+	"github.com/mchen04/sports-betting-bot/internal/analysis"
+	"github.com/mchen04/sports-betting-bot/internal/positions"
 )
 
 // Notifier handles alert notifications

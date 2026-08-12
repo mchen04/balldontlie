@@ -5,10 +5,10 @@ import (
 	"os"
 	"testing"
 
-	"sports-betting-bot/internal/analysis"
-	"sports-betting-bot/internal/api"
-	"sports-betting-bot/internal/odds"
-	"sports-betting-bot/internal/positions"
+	"github.com/mchen04/sports-betting-bot/internal/analysis"
+	"github.com/mchen04/sports-betting-bot/internal/api"
+	"github.com/mchen04/sports-betting-bot/internal/odds"
+	"github.com/mchen04/sports-betting-bot/internal/positions"
 )
 
 // TestFullPipeline tests the entire flow from API response to opportunity detection

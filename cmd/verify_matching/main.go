@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	"sports-betting-bot/internal/kalshi"
+	"github.com/mchen04/sports-betting-bot/internal/kalshi"
 )
 
 func main() {

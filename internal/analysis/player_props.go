@@ -5,10 +5,10 @@ import (
 	"math"
 	"time"
 
-	"sports-betting-bot/internal/api"
-	"sports-betting-bot/internal/kalshi"
-	"sports-betting-bot/internal/mathutil"
-	"sports-betting-bot/internal/odds"
+	"github.com/mchen04/sports-betting-bot/internal/api"
+	"github.com/mchen04/sports-betting-bot/internal/kalshi"
+	"github.com/mchen04/sports-betting-bot/internal/mathutil"
+	"github.com/mchen04/sports-betting-bot/internal/odds"
 )
 
 // filterFreshProps removes props whose UpdatedAt is older than maxAgeSec.

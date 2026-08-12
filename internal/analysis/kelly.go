@@ -3,7 +3,7 @@ package analysis
 import (
 	"math"
 
-	"sports-betting-bot/internal/kalshi"
+	"github.com/mchen04/sports-betting-bot/internal/kalshi"
 )
 
 // CalculateKelly computes the Kelly criterion bet size with fee adjustment.

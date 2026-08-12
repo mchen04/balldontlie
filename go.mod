@@ -1,4 +1,4 @@
-module sports-betting-bot
+module github.com/mchen04/sports-betting-bot
 
 go 1.25.6
 

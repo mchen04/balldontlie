@@ -4,8 +4,8 @@ import (
 	"log/slog"
 	"time"
 
-	"sports-betting-bot/internal/analysis"
-	"sports-betting-bot/internal/kalshi"
+	"github.com/mchen04/sports-betting-bot/internal/analysis"
+	"github.com/mchen04/sports-betting-bot/internal/kalshi"
 )
 
 // MapToKalshiTicker maps a BallDontLie game opportunity to a Kalshi market ticker.

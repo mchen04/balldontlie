@@ -4,8 +4,8 @@ import (
 	"math"
 	"time"
 
-	"sports-betting-bot/internal/api"
-	"sports-betting-bot/internal/mathutil"
+	"github.com/mchen04/sports-betting-bot/internal/api"
+	"github.com/mchen04/sports-betting-bot/internal/mathutil"
 )
 
 const (

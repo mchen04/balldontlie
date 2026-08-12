@@ -3,7 +3,7 @@ package analysis
 import (
 	"math"
 
-	"sports-betting-bot/internal/mathutil"
+	"github.com/mchen04/sports-betting-bot/internal/mathutil"
 )
 
 // Distribution inference and probability calculation for player props

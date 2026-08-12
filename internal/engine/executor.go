@@ -7,10 +7,10 @@ import (
 	"sync"
 	"time"
 
-	"sports-betting-bot/internal/analysis"
-	"sports-betting-bot/internal/config"
-	"sports-betting-bot/internal/kalshi"
-	"sports-betting-bot/internal/positions"
+	"github.com/mchen04/sports-betting-bot/internal/analysis"
+	"github.com/mchen04/sports-betting-bot/internal/config"
+	"github.com/mchen04/sports-betting-bot/internal/kalshi"
+	"github.com/mchen04/sports-betting-bot/internal/positions"
 )
 
 // recentAttempts tracks recently-attempted ticker+side combos to prevent
